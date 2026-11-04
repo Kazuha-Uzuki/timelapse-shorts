@@ -40,7 +40,7 @@ GitHub の画面で **Releases** → **Draft a new release** → タグ欄に `v
 | `src/Ffmpeg.cs` | 変換ロジック（エンコーダー検出・間引き・冒頭移動・HDR変換・縦長化） |
 | `src/MainWindow.xaml(.cs)` | 画面。各サービスの上限が変わったら `Platforms` の数字を書き換える |
 | `.github/workflows/build.yml` | exe ビルド、LGPL版 FFmpeg の同梱、試し書き、zip 化 |
-| `使い方.txt` | 配布 zip に入る利用者向け説明 |
+| `使い方.txt` | 利用者向け説明。配布 zip には `README.txt` という名前で入る（日本語のファイル名は解凍ソフトによって文字化けするため） |
 
 ## ライセンスまわりの注意
 

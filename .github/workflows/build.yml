@@ -65,7 +65,8 @@ jobs:
       - name: zip にまとめる
         shell: pwsh
         run: |
-          Copy-Item "使い方.txt" dist\
+          # 日本語のファイル名は解凍ソフトによって文字化けするので、英字の名前で入れる
+          Copy-Item "使い方.txt" dist\README.txt
           Compress-Archive dist\* TimelapseShorts-win64.zip
 
       - uses: actions/upload-artifact@v4
