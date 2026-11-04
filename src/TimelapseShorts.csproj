@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Linux/macOS 上でもコンパイル確認できるようにする（実行はWindowsのみ） -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>TimelapseShorts</AssemblyName>
+    <Product>タイムラプス縦動画メーカー</Product>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+</Project>

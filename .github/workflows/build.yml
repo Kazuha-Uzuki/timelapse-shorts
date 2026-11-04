@@ -1,0 +1,77 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # タグ時に Release を作るため
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: アプリをビルド（.NET同梱の単一exe）
+        run: >
+          dotnet publish src/TimelapseShorts.csproj -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=none -o dist
+
+      - name: LGPL版 FFmpeg を取得
+        shell: pwsh
+        run: |
+          # 安定版ブランチの最新（例: ffmpeg-n8.0-latest-win64-lgpl-8.0.zip）を選ぶ。無ければ master 版。
+          $names = gh release view latest -R BtbN/FFmpeg-Builds --json assets --jq '.assets[].name'
+          $stable = $names | Where-Object { $_ -match '^ffmpeg-n([\d.]+)-latest-win64-lgpl-[\d.]+\.zip$' } |
+                    Sort-Object { [version]($_ -replace '^ffmpeg-n([\d.]+)-.*$', '$1') } | Select-Object -Last 1
+          $asset = if ($stable) { $stable } else { 'ffmpeg-master-latest-win64-lgpl.zip' }
+          Write-Host "使用する FFmpeg: $asset"
+          gh release download latest -R BtbN/FFmpeg-Builds -p $asset -O ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
+          $root = Get-ChildItem ffmpeg -Directory | Select-Object -First 1
+          Copy-Item "$($root.FullName)\bin\ffmpeg.exe", "$($root.FullName)\bin\ffprobe.exe" dist\
+          Copy-Item "$($root.FullName)\LICENSE.txt" dist\FFmpeg-LICENSE.txt
+          "FFmpeg: $asset`r`nSource: https://github.com/BtbN/FFmpeg-Builds / https://ffmpeg.org/download.html" |
+            Out-File dist\FFmpeg-SOURCE.txt -Encoding utf8
+
+      - name: エンコーダーの確認と試し書き
+        shell: pwsh
+        run: |
+          $enc = & dist\ffmpeg.exe -hide_banner -encoders
+          foreach ($e in 'h264_nvenc','h264_qsv','h264_amf','h264_mf','libopenh264') {
+            $ok = [bool]($enc | Select-String -SimpleMatch " $e ")
+            Write-Host ("{0,-12} {1}" -f $e, $(if ($ok) { '含まれている' } else { '含まれていない' }))
+          }
+          # このランナーにGPUは無いので、CPU側の代替エンコーダーが実際に動くか確認する
+          $worked = $false
+          foreach ($e in 'h264_mf','libopenh264') {
+            & dist\ffmpeg.exe -hide_banner -loglevel error -f lavfi -i "testsrc2=s=1920x1080:r=30:d=2" `
+              -vf "crop='min(iw,ih*9/16)':'min(ih,iw*16/9)',scale=1080:1920" -c:v $e -b:v 10M -f null -
+            if ($LASTEXITCODE -eq 0) { Write-Host "$e で試し書き成功"; $worked = $true } else { Write-Host "$e は使えない" }
+          }
+          if (-not $worked) { throw "GPUが無いPC向けの代替エンコーダーが動きません" }
+
+      - name: zip にまとめる
+        shell: pwsh
+        run: |
+          Copy-Item "使い方.txt" dist\
+          Compress-Archive dist\* TimelapseShorts-win64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TimelapseShorts-win64
+          path: TimelapseShorts-win64.zip
+
+      - name: Release を作成（v から始まるタグを push したときだけ）
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release create ${{ github.ref_name }} TimelapseShorts-win64.zip --generate-notes
