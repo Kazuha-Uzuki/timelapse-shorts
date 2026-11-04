@@ -29,15 +29,9 @@
 
 ### 配布用の Release を作る
 
-`v` から始まるタグを push すると、Release ページに zip が付いた状態で公開されます
-（ダウンロードに GitHub ログインが不要になるので、他人に配るときはこちら）。
-
-```
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-GitHub の画面だけで作る場合: **Releases** → **Draft a new release** → タグ欄に `v1.0.0` と入力して新規作成 → **Publish**。
+GitHub の画面で **Releases** → **Draft a new release** → タグ欄に `v0.1.0` のような名前を入力して新規作成 → **Publish release**。
+数分後、その Release に `TimelapseShorts-win64.zip` が自動で付きます。
+公開リポジトリなら GitHub のアカウントがない人もダウンロードできるので、他人に配るときはこちら。
 
 ## 構成
 

@@ -3,11 +3,12 @@ name: build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+  release:
+    types: [published] # GitHub の画面で Release を公開したとき
   workflow_dispatch:
 
 permissions:
-  contents: write # タグ時に Release を作るため
+  contents: write # Release に zip を付けるため
 
 jobs:
   build:
@@ -72,6 +73,8 @@ jobs:
           name: TimelapseShorts-win64
           path: TimelapseShorts-win64.zip
 
-      - name: Release を作成（v から始まるタグを push したときだけ）
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: gh release create ${{ github.ref_name }} TimelapseShorts-win64.zip --generate-notes
+      - name: Release に zip を付ける（Release を公開したときだけ）
+        if: github.event_name == 'release'
+        run: gh release upload "$env:TAG" TimelapseShorts-win64.zip --clobber
+        env:
+          TAG: ${{ github.event.release.tag_name }}
