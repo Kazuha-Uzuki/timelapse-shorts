@@ -15,6 +15,7 @@ static class Program
     static int _failures;
     static MainWindow? _window;        // CheckWindow で作った画面（最後にプレビューの表示も確かめる）
     static List<byte[]>? _previewPngs; // RunAsync で作ったプレビューの画
+    static List<byte[]>? _shotPngs;
 
     static void Check(string name, bool ok, string detail = "")
     {
@@ -200,6 +201,7 @@ static class Program
             var withText = await Render([video], total, 1,
                 new Ffmpeg.Caption(text, font.File, font.Family, 90, "FFFFFF", "000000", Ffmpeg.TextPosition.Top));
             Check("プレビュー: 文字が入る", withText.Count == 3 && !withText[0].AsSpan().SequenceEqual(plain[0]));
+            _shotPngs = withText;
         }
 
         // 2本（各30秒）をつないで5秒・最後の1秒を冒頭へ → 12倍速。
@@ -214,6 +216,23 @@ static class Program
         Check("プレビュー（2本）: 最初は2本目の完成品", multi[0].AsSpan().SequenceEqual(only2[0]), $"{multiSeconds:0.00}秒");
         Check("プレビュー（2本）: 真ん中は1本目", multi[1].AsSpan().SequenceEqual(only1[0]));
         _previewPngs = plain;
+    }
+
+    static void Shot(string name, Window window)
+    {
+        window.UpdateLayout();
+        var client = (FrameworkElement)System.Windows.Media.VisualTreeHelper.GetChild(window, 0);
+        int width = (int)Math.Ceiling(client.ActualWidth), height = (int)Math.Ceiling(client.ActualHeight);
+        var rtb = new RenderTargetBitmap(width * 2, height * 2, 192, 192, System.Windows.Media.PixelFormats.Pbgra32);
+        rtb.Render(window);
+        var enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(rtb));
+        using var ms = new MemoryStream();
+        enc.Save(ms);
+        string b64 = Convert.ToBase64String(ms.ToArray());
+        Console.WriteLine($"SHOTSIZE {name} {width}x{height} {b64.Length}");
+        for (int i = 0; i < b64.Length; i += 4000)
+            Console.WriteLine($"SHOT {name} {b64.Substring(i, Math.Min(4000, b64.Length - i))}");
     }
 
     /// <summary>プレビューの画面を実際に開いて、画が入るか・2回目は同じ画面を使い回すか・閉じられるかを確かめる。</summary>
@@ -238,6 +257,9 @@ static class Program
                 preview is { IsVisible: true } && images.All(i => i.Source is BitmapSource { PixelWidth: 360, PixelHeight: 640 })
                 && labels[0].Text == "最初（完成品）",
                 string.Join(" / ", labels.Select(l => l.Text)));
+            show.Invoke(w, [_shotPngs ?? _previewPngs, true]);
+            Shot("preview", Current()!);
+            Shot("main", w);
             show.Invoke(w, [_previewPngs, false]);
             Check("2回目は同じ画面で画を差し替える", ReferenceEquals(preview, Current()) && w.OwnedWindows.Count == 1
                                                     && labels[0].Text == "最初");
