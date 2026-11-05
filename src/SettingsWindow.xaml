@@ -1,0 +1,21 @@
+<Window x:Class="TimelapseShorts.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="設定" Width="420" SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" FontFamily="Yu Gothic UI" FontSize="14"
+        Background="{DynamicResource ApplicationBackgroundBrush}"
+        Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+    <StackPanel Margin="20,16,20,20">
+        <TextBlock Text="画面の色" FontWeight="Bold" FontSize="15"/>
+        <!-- 選んだらすぐに変わる -->
+        <RadioButton x:Name="SystemRadio" Content="Windows に合わせる" Margin="0,6,0,0" Checked="Theme_Checked"/>
+        <RadioButton x:Name="LightRadio" Content="ライト（明るい）" Checked="Theme_Checked"/>
+        <RadioButton x:Name="DarkRadio" Content="ダーク（暗い）" Checked="Theme_Checked"/>
+
+        <TextBlock Margin="0,16,0,0" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Text="投稿先・総尺・冒頭に移す秒数・BGM の音量とフェード・文字のフォント／色／位置／背景／大きさは、閉じるときに覚えて、次に起動したときも同じにします。"/>
+
+        <Button x:Name="CloseButton" Content="閉じる" Padding="20,5" Margin="0,16,0,0" HorizontalAlignment="Right"
+                IsDefault="True" IsCancel="True" Click="CloseButton_Click"/>
+    </StackPanel>
+</Window>
