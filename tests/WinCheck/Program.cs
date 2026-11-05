@@ -339,7 +339,7 @@ static class Program
         Check("前回の設定に戻る",
             w.PlatformPanel.Children.OfType<RadioButton>().ElementAt(2).IsChecked == true && w.LengthBox.Text == "4:30"
             && w.IntroCheck.IsChecked == true && w.IntroBox.Text == "7" && w.BlurRadio.IsChecked == true
-            && w.FadeInBox.Text == "2" && w.FadeOutBox.Text == "3" && w.VolumeSlider.Value == -4
+            && w.FadeInBox.Text == "2" && w.FadeOutBox.Text == "３" && w.VolumeSlider.Value == -4
             && w.FontBox.SelectedItem?.ToString() == font && w.ColorBox.SelectedIndex == 2 && w.PositionBox.SelectedIndex == 2
             && w.BackBoxRadio.IsChecked == true && w.SizeBox.Text == "100",
             File.ReadAllText(AppSettings.FilePath).ReplaceLineEndings(" "));

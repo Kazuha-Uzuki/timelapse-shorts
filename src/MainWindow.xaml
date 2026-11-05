@@ -1,6 +1,7 @@
 <Window x:Class="TimelapseShorts.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         Title="タイムラプス縦動画メーカー" Width="1480" Height="720" MinWidth="1240" MinHeight="650"
         WindowStartupLocation="CenterScreen" AllowDrop="True"
         DragOver="Window_DragOver" Drop="Window_Drop" Loaded="Window_Loaded"
@@ -9,6 +10,21 @@
         Foreground="{DynamicResource TextFillColorPrimaryBrush}">
     <!-- 色はテーマ（ライト／ダーク）の色を使う。テーマは SettingsWindow.ApplyTheme で切り替える -->
     <Window.Resources>
+        <!-- Fluent テーマの部品は大きめなので、小さいノートPC（1280×720・150%）に収まるよう少し詰める -->
+        <sys:Double x:Key="TextControlThemeMinHeight">28</sys:Double>
+        <Thickness x:Key="ComboBoxPadding">10,3,0,4</Thickness>
+        <Thickness x:Key="GroupBoxHeaderMargin">0,0,0,6</Thickness>
+        <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+            <Setter Property="MinHeight" Value="26"/>
+            <Setter Property="MinWidth" Value="0"/>
+        </Style>
+        <Style TargetType="RadioButton" BasedOn="{StaticResource {x:Type RadioButton}}">
+            <Setter Property="MinWidth" Value="0"/>
+        </Style>
+        <!-- 投稿先・プレビューの「最初・真ん中・最後」のボタンは、マスいっぱいに広げる -->
+        <Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        </Style>
         <!-- 設定とプレビューの枠 -->
         <Style x:Key="Section" TargetType="GroupBox" BasedOn="{StaticResource {x:Type GroupBox}}">
             <Setter Property="Padding" Value="10,6,10,10"/>
