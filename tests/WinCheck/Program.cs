@@ -93,6 +93,7 @@ static class Program
         w.IntroFadeInBox.Text = "0.3";
         w.IntroFadeOutBox.Text = "０．３"; // 全角でも読める
         Check("完成品のフェード（全角）", w.StartButton.IsEnabled, w.InfoText.Text);
+        w.IntroFadeOutBox.Text = "0.3"; // 全角のままだと欄が狭くて途中で切れて見え、スクリーンショットがまぎらわしいので戻す
 
         w.TextCheck.IsChecked = true;
         Check("テキストが空なら作れない", w.InfoText.Text == "入れるテキストを入力してください" && !w.StartButton.IsEnabled
@@ -431,7 +432,7 @@ static class Program
         Check("前回の設定に戻る",
             w.PlatformPanel.Children.OfType<RadioButton>().ElementAt(2).IsChecked == true && w.LengthBox.Text == "4:30"
             && w.IntroCheck.IsChecked == true && w.IntroBox.Text == "7" && w.BlurRadio.IsChecked == true
-            && w.IntroFadeInBox.Text == "0.5" && w.IntroFadeOutBox.Text == "０．３"
+            && w.IntroFadeInBox.Text == "0.5" && w.IntroFadeOutBox.Text == "0.3"
             && w.FadeInBox.Text == "2" && w.FadeOutBox.Text == "３" && w.VolumeSlider.Value == -4
             && w.FontBox.SelectedItem?.ToString() == font && w.ColorBox.SelectedIndex == 2 && w.PositionBox.SelectedIndex == 2
             && w.BackBoxRadio.IsChecked == true && w.SizeBox.Text == "100",
