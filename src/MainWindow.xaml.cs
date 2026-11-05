@@ -527,6 +527,26 @@ public partial class MainWindow : Window
         UpdatePreviewStale();
     }
 
+    const double PreviewMinColumn = 290; // プレビュー欄の最小の幅（MainWindow.xaml の初期値）
+    const double SettingsMinWidth = 890; // 左（動画・設定）に残す最小の幅（最小サイズの窓のときの幅）
+
+    /// <summary>
+    /// プレビューの枠を出来上がりと同じ 9:16 にして、欄の高さいっぱいに大きくする。
+    /// 窓を縦に大きくしたら欄の幅も広げる（左の設定が最小サイズのときより狭くならない範囲で）。
+    /// </summary>
+    void PreviewArea_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        double height = PreviewArea.ActualHeight - PreviewControls.ActualHeight; // 枠に使える高さ
+        if (height <= 0 || Content is not FrameworkElement root) return;
+        double chrome = PreviewColumn.ActualWidth - PreviewArea.ActualWidth;      // 欄の線と余白
+        double maxColumn = Math.Max(PreviewMinColumn, root.ActualWidth - 12 - SettingsMinWidth);
+        double column = Math.Clamp(height * 9 / 16 + chrome, PreviewMinColumn, maxColumn);
+        if (Math.Abs(PreviewColumn.ActualWidth - column) > 1) PreviewColumn.Width = new GridLength(column);
+        double width = Math.Min(column - chrome, height * 9 / 16);
+        PreviewFrame.Width = width;
+        PreviewFrame.Height = width * 16 / 9;
+    }
+
     void PreviewFrame_Checked(object sender, RoutedEventArgs e)
     {
         if (_ready) ShowPreviewFrame();

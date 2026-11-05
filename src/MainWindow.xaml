@@ -30,7 +30,8 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="12"/>
-            <ColumnDefinition Width="290"/>
+            <!-- 幅は、プレビューが欄の高さいっぱいの 9:16 になるよう MainWindow.xaml.cs で決める -->
+            <ColumnDefinition x:Name="PreviewColumn" Width="290"/>
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>             <!-- 説明と、動画の追加・クリア -->
@@ -239,43 +240,42 @@
 
         <!-- プレビュー（出来上がりの最初・真ん中・最後のうち1枚を大きく表示） -->
         <GroupBox Grid.Column="2" Grid.RowSpan="5" x:Name="PreviewSection" Header="プレビュー" Style="{StaticResource Section}">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <Border Background="#1e1e1e" CornerRadius="4">
-                    <Grid>
-                        <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-                        <TextBlock x:Name="PreviewPlaceholder" Margin="20" Foreground="#bbb" TextWrapping="Wrap"
-                                   TextAlignment="Center" VerticalAlignment="Center"
-                                   Text="動画を入れて、下の「プレビュー」を押すと、ここに出来上がりの画が出ます"/>
-                        <!-- 表示中の画を作ったあとに設定が変わったら知らせる -->
-                        <Border x:Name="PreviewStale" VerticalAlignment="Bottom" Background="#D0000000" Padding="10,8"
-                                Visibility="Collapsed">
-                            <TextBlock Foreground="White" FontSize="12" TextWrapping="Wrap"
-                                       Text="設定が変わりました。「プレビュー」を押すと反映されます"/>
-                        </Border>
-                    </Grid>
-                </Border>
-                <UniformGrid Grid.Row="1" Columns="3" Margin="-3,6,-3,0">
-                    <RadioButton x:Name="PreviewFirstRadio" Content="最初" GroupName="PreviewFrame" IsChecked="True"
-                                 Margin="3" Padding="4" Style="{StaticResource {x:Type ToggleButton}}"
-                                 Checked="PreviewFrame_Checked"/>
-                    <RadioButton x:Name="PreviewMiddleRadio" Content="真ん中" GroupName="PreviewFrame"
-                                 Margin="3" Padding="4" Style="{StaticResource {x:Type ToggleButton}}"
-                                 Checked="PreviewFrame_Checked"/>
-                    <RadioButton x:Name="PreviewLastRadio" Content="最後" GroupName="PreviewFrame"
-                                 Margin="3" Padding="4" Style="{StaticResource {x:Type ToggleButton}}"
-                                 Checked="PreviewFrame_Checked"/>
-                </UniformGrid>
-                <TextBlock Grid.Row="2" x:Name="PreviewCaption" Style="{StaticResource Note}" Margin="0,2,0,0"
-                           TextAlignment="Center"/>
-                <Button Grid.Row="3" x:Name="PreviewButton" Content="プレビュー" Padding="16,6" Margin="0,8,0,0"
-                        IsEnabled="False" Click="PreviewButton_Click"
-                        ToolTip="出来上がりの最初・真ん中・最後の画を、作成する前に確かめます（音は入りません）"/>
+            <Grid x:Name="PreviewArea" SizeChanged="PreviewArea_SizeChanged">
+                <StackPanel VerticalAlignment="Top">
+                    <!-- 出来上がりと同じ 9:16 の枠。大きさは MainWindow.xaml.cs で決める -->
+                    <Border x:Name="PreviewFrame" Background="#1e1e1e" HorizontalAlignment="Center" Width="268" Height="476">
+                        <Grid>
+                            <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <TextBlock x:Name="PreviewPlaceholder" Margin="20" Foreground="#bbb" TextWrapping="Wrap"
+                                       TextAlignment="Center" VerticalAlignment="Center"
+                                       Text="動画を入れて、下の「プレビュー」を押すと、ここに出来上がりの画が出ます"/>
+                            <!-- 表示中の画を作ったあとに設定が変わったら知らせる -->
+                            <Border x:Name="PreviewStale" VerticalAlignment="Bottom" Background="#D0000000" Padding="10,8"
+                                    Visibility="Collapsed">
+                                <TextBlock Foreground="White" FontSize="12" TextWrapping="Wrap"
+                                           Text="設定が変わりました。「プレビュー」を押すと反映されます"/>
+                            </Border>
+                        </Grid>
+                    </Border>
+                    <StackPanel x:Name="PreviewControls">
+                        <UniformGrid Columns="3" Margin="-3,6,-3,0">
+                            <RadioButton x:Name="PreviewFirstRadio" Content="最初" GroupName="PreviewFrame" IsChecked="True"
+                                         Margin="3" Padding="4" Style="{StaticResource {x:Type ToggleButton}}"
+                                         Checked="PreviewFrame_Checked"/>
+                            <RadioButton x:Name="PreviewMiddleRadio" Content="真ん中" GroupName="PreviewFrame"
+                                         Margin="3" Padding="4" Style="{StaticResource {x:Type ToggleButton}}"
+                                         Checked="PreviewFrame_Checked"/>
+                            <RadioButton x:Name="PreviewLastRadio" Content="最後" GroupName="PreviewFrame"
+                                         Margin="3" Padding="4" Style="{StaticResource {x:Type ToggleButton}}"
+                                         Checked="PreviewFrame_Checked"/>
+                        </UniformGrid>
+                        <TextBlock x:Name="PreviewCaption" Style="{StaticResource Note}" Margin="0,2,0,0"
+                                   TextAlignment="Center"/>
+                        <Button x:Name="PreviewButton" Content="プレビュー" Padding="16,6" Margin="0,8,0,0"
+                                IsEnabled="False" Click="PreviewButton_Click"
+                                ToolTip="出来上がりの最初・真ん中・最後の画を、作成する前に確かめます（音は入りません）"/>
+                    </StackPanel>
+                </StackPanel>
             </Grid>
         </GroupBox>
     </Grid>

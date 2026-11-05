@@ -277,6 +277,7 @@ static class Program
 
             CheckLayout(w, 1480, 720, "標準"); // MainWindow.xaml の Width / Height
             CheckLayout(w, 1240, 650, "最小"); // MainWindow.xaml の MinWidth / MinHeight
+            CheckLayout(w, 1920, 1030, "最大化"); // フルHDの画面いっぱい（プレビューが大きくなる）
 
             typeof(MainWindow).GetMethod("ClearButton_Click", F)!.Invoke(w, [w.ClearButton, new RoutedEventArgs()]);
             Check("動画をクリアするとプレビューも消える", w.PreviewImage.Source == null && w.PreviewPlaceholder.IsVisible
@@ -329,6 +330,15 @@ static class Program
         Check($"画面の配置（{label} {width}×{height}）: 切れている所がない", sized && clipped.Count == 0 && inside,
             (sized ? "" : $"窓が {w.ActualWidth}×{w.ActualHeight} にしかならない / ") + string.Join(" / ", clipped)
             + (inside ? "" : $" / 作成ボタンが窓の外（{corner.X:0}, {corner.Y:0}）"));
+        // プレビューの枠は出来上がりと同じ 9:16 で、画が枠いっぱいに出る（黒い余白がない）
+        var frame = w.PreviewFrame;
+        var bottom = w.PreviewButton.TranslatePoint(new Point(0, w.PreviewButton.ActualHeight), root);
+        Check($"プレビューの枠が 9:16（{label}）",
+            Math.Abs(frame.ActualWidth / frame.ActualHeight - 9.0 / 16) < 0.005
+            && Math.Abs(w.PreviewImage.ActualWidth - frame.ActualWidth) < 1 && Math.Abs(w.PreviewImage.ActualHeight - frame.ActualHeight) < 1
+            && bottom.Y <= root.ActualHeight + 0.5,
+            $"枠 {frame.ActualWidth:0.#}×{frame.ActualHeight:0.#} / 画 {w.PreviewImage.ActualWidth:0.#}×{w.PreviewImage.ActualHeight:0.#}"
+            + $" / 欄の幅 {w.PreviewSection.ActualWidth:0}");
         var client = (FrameworkElement)VisualTreeHelper.GetChild(w, 0);
         Shot($"main-{label}", client, client.RenderSize);
     }
