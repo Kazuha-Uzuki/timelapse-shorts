@@ -1,0 +1,198 @@
+<Window x:Class="TimelapseShorts.IntroWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sys="clr-namespace:System;assembly=System.Runtime"
+        xmlns:local="clr-namespace:TimelapseShorts"
+        Title="冒頭に持ってくる部分を選ぶ" Width="1240" Height="720" MinWidth="1000" MinHeight="660"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Loaded="Window_Loaded"
+        FontFamily="Yu Gothic UI" FontSize="14"
+        Background="{DynamicResource ApplicationBackgroundBrush}"
+        Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+    <Window.Resources>
+        <!-- MainWindow.xaml と同じく、Fluent の部品を少し詰める -->
+        <sys:Double x:Key="TextControlThemeMinHeight">28</sys:Double>
+        <Style TargetType="RadioButton" BasedOn="{StaticResource {x:Type RadioButton}}">
+            <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="Padding" Value="8,3,0,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Width" Value="52"/>
+            <Setter Property="Padding" Value="2"/>
+            <Setter Property="Margin" Value="6,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <!-- 右側の設定のカード -->
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="14,6,14,8"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+        </Style>
+        <Style x:Key="CardTitle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Margin" Value="0,0,0,2"/>
+        </Style>
+        <Style x:Key="Note" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>    <!-- 動画と設定 -->
+            <RowDefinition Height="Auto"/> <!-- 下のバー -->
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="TopArea" SizeChanged="TopArea_SizeChanged">
+            <Grid.ColumnDefinitions>
+                <!-- 幅は、動画の枠が 9:16 になるよう IntroWindow.xaml.cs で決める -->
+                <ColumnDefinition x:Name="VideoColumn" Width="300"/>
+                <ColumnDefinition Width="16"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 左: 元の動画（再生できれば再生、できなければバーの位置の画） -->
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Border x:Name="VideoFrame" Background="#1e1e1e" CornerRadius="4" ClipToBounds="True"
+                        MouseLeftButtonUp="VideoFrame_MouseLeftButtonUp">
+                    <Grid>
+                        <Image x:Name="FrameImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <MediaElement x:Name="Player" LoadedBehavior="Manual" UnloadedBehavior="Close" Stretch="Uniform"
+                                      ScrubbingEnabled="True" Volume="0.5" Visibility="Collapsed"
+                                      MediaOpened="Player_MediaOpened" MediaFailed="Player_MediaFailed"
+                                      MediaEnded="Player_MediaEnded"/>
+                        <TextBlock x:Name="VideoPlaceholder" Foreground="#bbb" TextWrapping="Wrap" TextAlignment="Center"
+                                   VerticalAlignment="Center" Margin="20" Text="動画を読み込んでいます…"/>
+                        <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Padding="8,3"
+                                CornerRadius="4" Background="#B0000000">
+                            <TextBlock x:Name="BadgeText" Foreground="White" FontSize="12"/>
+                        </Border>
+                    </Grid>
+                </Border>
+                <TextBlock Grid.Row="1" x:Name="VideoNote" Style="{StaticResource Note}" Margin="0,6,0,0"/>
+            </Grid>
+
+            <!-- 右: 設定のカードと、OK／やめる -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <StackPanel>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="選びかた" Style="{StaticResource CardTitle}"/>
+                            <RadioButton x:Name="PickRadio" GroupName="How" Checked="Mode_Checked"
+                                         Content="見ながら選ぶ（下のバーをドラッグして範囲を選ぶ）"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <RadioButton x:Name="LastRadio" GroupName="How" Checked="Mode_Checked" Content="数値で：最後の"/>
+                                <TextBox x:Name="LastBox" TextChanged="LastBox_TextChanged"/>
+                                <TextBlock Text="秒（いまと同じ）" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="冒頭への持っていきかた" Style="{StaticResource CardTitle}"/>
+                            <WrapPanel>
+                                <RadioButton x:Name="MoveRadio" GroupName="Carry" Checked="Mode_Checked"
+                                             Content="移す（本編からはなくす）" Margin="0,0,32,0"/>
+                                <RadioButton x:Name="CopyRadio" GroupName="Carry" Checked="Mode_Checked"
+                                             Content="コピー（本編にも残す）"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="冒頭の長さ・フェード" Style="{StaticResource CardTitle}"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="冒頭の長さ" VerticalAlignment="Center"/>
+                                <TextBox x:Name="SecondsBox" TextChanged="SecondsBox_TextChanged"/>
+                                <TextBlock Text="秒" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="SpeedText" Style="{StaticResource Note}" Margin="16,0,0,0"/>
+                            </StackPanel>
+                            <!-- 冒頭の部分だけのフェード（黒から出てきて、黒に消えてから本編につなぐ）。0 秒でなし -->
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <TextBlock Text="フェード イン" VerticalAlignment="Center"/>
+                                <TextBox x:Name="FadeInBox" TextChanged="Box_TextChanged"/>
+                                <TextBlock Text="アウト" VerticalAlignment="Center"/>
+                                <TextBox x:Name="FadeOutBox" TextChanged="Box_TextChanged"/>
+                                <TextBlock Text="秒" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="出来上がりの並び" Style="{StaticResource CardTitle}"/>
+                            <!-- 冒頭と本編の長さの割合で並べる（幅は IntroWindow.xaml.cs で決める） -->
+                            <Grid Height="30" Margin="0,2,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition x:Name="OrderIntroColumn" Width="1*" MinWidth="80"/>
+                                    <ColumnDefinition x:Name="OrderMainColumn" Width="10*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Background="{DynamicResource AccentFillColorDefaultBrush}" CornerRadius="4,0,0,4">
+                                    <TextBlock x:Name="OrderIntroText" Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
+                                               VerticalAlignment="Center" HorizontalAlignment="Center" FontSize="13"/>
+                                </Border>
+                                <Border Grid.Column="1" Background="#8a94a3" CornerRadius="0,4,4,0">
+                                    <TextBlock x:Name="OrderMainText" Foreground="White" VerticalAlignment="Center"
+                                               HorizontalAlignment="Center" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+                <TextBlock Grid.Row="1" x:Name="ErrorText" Margin="2,0,0,0" TextWrapping="Wrap" FontWeight="SemiBold"
+                           Foreground="{DynamicResource SystemFillColorCriticalBrush}"/>
+                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                    <Button x:Name="OkButton" Content="OK（これにする）" Padding="24,6" IsDefault="True"
+                            Style="{DynamicResource AccentButtonStyle}" Click="OkButton_Click"/>
+                    <Button x:Name="CancelButton" Content="やめる" Padding="20,6" Margin="8,0,0,0" IsCancel="True"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+
+        <!-- 下: 再生・時刻・「ここから」「ここまで」と、全体と拡大の 2 本のバー -->
+        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,12,0,0" Padding="14,8,14,4">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="44"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <DockPanel Grid.ColumnSpan="2" Margin="0,0,0,6">
+                    <Button x:Name="PlayButton" Content="▶" Width="40" Padding="0,4" Click="PlayButton_Click"
+                            ToolTip="再生／一時停止（動画をクリックしても同じ）"/>
+                    <TextBlock x:Name="TimeText" Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                    <Button x:Name="FromButton" Content="ここから" Padding="14,4" Margin="16,0,0,0" Click="FromButton_Click"
+                            ToolTip="今の位置を、選ぶ範囲のはじめにする"/>
+                    <Button x:Name="ToButton" Content="ここまで" Padding="14,4" Margin="8,0,0,0" Click="ToButton_Click"
+                            ToolTip="今の位置を、選ぶ範囲の終わりにする"/>
+                    <TextBlock x:Name="HintText" Style="{StaticResource Note}" Margin="16,0,0,0" FontSize="13"/>
+                </DockPanel>
+                <TextBlock Grid.Row="1" Text="全体" Margin="0,4,0,0" Style="{StaticResource Note}" VerticalAlignment="Top"/>
+                <local:RangeBar Grid.Row="1" Grid.Column="1" x:Name="OverallBar" Margin="0,0,0,4"
+                                ToolTip="クリック・ドラッグで、その位置を見る"/>
+                <TextBlock Grid.Row="2" Text="拡大" Margin="0,4,0,0" Style="{StaticResource Note}" VerticalAlignment="Top"/>
+                <local:RangeBar Grid.Row="2" Grid.Column="1" x:Name="ZoomBar" CanSelect="True"
+                                ToolTip="ドラッグで範囲を選ぶ（両端をつまんで調整）。クリックでその位置を見る。ホイールで拡大・縮小"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

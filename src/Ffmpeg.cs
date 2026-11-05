@@ -139,33 +139,90 @@ public static class Ffmpeg
     public record PreviewFrame(double Seconds, byte[] Png);
 
     /// <summary>
+    /// 冒頭に持ってくる部分。元の動画（つないだもの）の Start〜End 秒を、出来上がりの最初の Seconds 秒にする
+    /// （倍速は (End − Start) / Seconds。1 より小さければゆっくりになる）。
+    /// Copy が false なら本編からはなくし（移す）、true なら本編にも残す（コピー）。
+    /// FadeIn / FadeOut は、この部分だけのフェード（秒。0 でなし）。
+    /// </summary>
+    public record Intro(double Start, double End, double Seconds, bool Copy = false, double FadeIn = 0, double FadeOut = 0)
+    {
+        public double Speed => (End - Start) / Seconds;
+
+        /// <summary>
+        /// 「数値で：最後の N 秒」。出来上がりの本編の最後の seconds 秒にあたる部分（元の動画の終わり）を冒頭に持ってくる。
+        /// 移すなら今までと同じ結果になる（完成品も本編も、全体と同じ倍速）。
+        /// </summary>
+        public static Intro Last(double total, double target, double seconds, bool copy = false, double fadeIn = 0, double fadeOut = 0)
+        {
+            double factor = copy ? Math.Max(1, total / Math.Max(1e-9, target - seconds)) : Math.Max(1, total / target);
+            return new Intro(Math.Max(0, total - seconds * factor), total, seconds, copy, fadeIn, fadeOut);
+        }
+    }
+
+    /// <summary>本編に使う元の動画の長さ（秒）。移すなら、冒頭に持っていった部分を除く。</summary>
+    public static double MainSourceSeconds(Intro? intro, double total) =>
+        intro == null || intro.Copy ? total : intro.Start + (total - intro.End);
+
+    /// <summary>本編の倍速。本編に使う元の長さを、総尺から冒頭を引いた長さにする（元が短ければ等速）。</summary>
+    public static double MainFactor(Intro? intro, double total, double target) =>
+        Math.Max(1, MainSourceSeconds(intro, total) / Math.Max(1e-9, target - (intro?.Seconds ?? 0)));
+
+    /// <summary>出来上がりの冒頭と本編のコマ数。</summary>
+    static (int Intro, int Main) FrameCounts(Intro? intro, double total, double target) =>
+        (intro == null ? 0 : (int)Math.Round(intro.Seconds * OutputFps),
+         (int)Math.Round(MainSourceSeconds(intro, total) / MainFactor(intro, total, target) * OutputFps));
+
+    /// <summary>出来上がりの長さ（秒）。</summary>
+    public static double OutputSeconds(Intro? intro, double total, double target)
+    {
+        var (i, m) = FrameCounts(intro, total, target);
+        return (double)(i + m) / OutputFps;
+    }
+
+    /// <summary>出来上がりの t 秒目が、元の動画（つないだもの）の何秒目か。</summary>
+    public static double SourceTime(Intro? intro, double total, double target, double t)
+    {
+        double introOut = intro == null ? 0 : FrameCounts(intro, total, target).Intro / (double)OutputFps;
+        if (intro != null && t < introOut) return intro.Start + t * intro.Speed;
+        double src = (t - introOut) * MainFactor(intro, total, target);
+        // 移したなら、本編は冒頭に持っていった部分を飛ばしてつながる
+        return intro is { Copy: false } && src >= intro.Start ? src + (intro.End - intro.Start) : src;
+    }
+
+    /// <summary>
     /// 入力（複数なら名前順に連結）を targetSeconds 秒の縦長タイムラプスにする（元が短ければ等速のまま）。
-    /// introSeconds が 0 より大きければ、タイムラプスの最後の introSeconds 秒（完成品）を冒頭に移動する。
+    /// intro があれば、その部分（完成品など）を冒頭に持ってくる。
     /// bgm / caption があれば、BGM と文字を入れる。作ったファイルのパスを返す。
     /// outputDir が null なら、1本目の動画と同じフォルダに作る。
-    /// introFadeIn / introFadeOut は、冒頭に移した完成品の部分のフェード（秒。0 でなし）。
     /// </summary>
     public static async Task<string> ConvertAsync(
-        IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds, double introSeconds,
+        IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds, Intro? intro,
         Layout layout, Bgm? bgm, Caption? caption, string suffix, string encoder,
-        IProgress<Progress> progress, CancellationToken ct, string? outputDir = null,
-        double introFadeIn = 0, double introFadeOut = 0)
+        IProgress<Progress> progress, CancellationToken ct, string? outputDir = null)
     {
-        if (introSeconds > 0 && totalSeconds - introSeconds * Math.Max(1, totalSeconds / targetSeconds) <= 0)
-            throw new ArgumentOutOfRangeException(nameof(introSeconds), "冒頭に移動する秒数が総尺以上です");
+        CheckIntro(intro, totalSeconds, targetSeconds);
 
         // 作業用フォルダ。ffmpeg をここで動かし、中のファイルは相対パスで渡す（パスの書き方の問題を避ける）
         string work = Path.Combine(Path.GetTempPath(), $"timelapse_{Guid.NewGuid():N}");
         Directory.CreateDirectory(work);
         try
         {
-            return await ConvertInAsync(work, inputs, totalSeconds, targetSeconds, introSeconds, layout, bgm, caption,
-                suffix, encoder, progress, ct, outputDir, introFadeIn, introFadeOut);
+            return await ConvertInAsync(work, inputs, totalSeconds, targetSeconds, intro, layout, bgm, caption,
+                suffix, encoder, progress, ct, outputDir);
         }
         finally
         {
             try { Directory.Delete(work, true); } catch { }
         }
+    }
+
+    static void CheckIntro(Intro? intro, double total, double target)
+    {
+        if (intro == null) return;
+        if (intro.Start < 0 || intro.End > total + 0.001 || intro.End - intro.Start <= 0 || intro.Seconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(intro), "冒頭に持ってくる部分が、元の動画の外です");
+        if (MainSourceSeconds(intro, total) <= 0 || target - intro.Seconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(intro), "冒頭に持ってくると、本編がなくなります");
     }
 
     /// <summary>動画のプレビューにするときの指定。出来上がりの最初の Seconds 秒だけを、360×640 で Output に作る。</summary>
@@ -177,15 +234,16 @@ public static class Ffmpeg
     /// （それでも、1コマずつしか読まない静止画のプレビューよりは、PC の速さに左右される）。
     /// </summary>
     public static async Task RenderPreviewClipAsync(IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds,
-        double introSeconds, double introFadeIn, double introFadeOut, Layout layout, Bgm? bgm, Caption? caption,
+        Intro? intro, Layout layout, Bgm? bgm, Caption? caption,
         string encoder, double clipSeconds, string output, IProgress<Progress> progress, CancellationToken ct)
     {
+        CheckIntro(intro, totalSeconds, targetSeconds);
         string work = Path.Combine(Path.GetTempPath(), $"timelapse_{Guid.NewGuid():N}");
         Directory.CreateDirectory(work);
         try
         {
-            await ConvertInAsync(work, inputs, totalSeconds, targetSeconds, introSeconds, layout, bgm, caption, "", encoder,
-                progress, ct, null, introFadeIn, introFadeOut, new Clip(clipSeconds, output));
+            await ConvertInAsync(work, inputs, totalSeconds, targetSeconds, intro, layout, bgm, caption, "", encoder,
+                progress, ct, null, new Clip(clipSeconds, output));
         }
         finally
         {
@@ -194,55 +252,70 @@ public static class Ffmpeg
     }
 
     static async Task<string> ConvertInAsync(string work,
-        IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds, double introSeconds,
+        IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds, Intro? intro,
         Layout layout, Bgm? bgm, Caption? caption, string suffix, string encoder,
-        IProgress<Progress> progress, CancellationToken ct, string? outputDir, double introFadeIn, double introFadeOut,
-        Clip? clip = null)
+        IProgress<Progress> progress, CancellationToken ct, string? outputDir, Clip? clip = null)
     {
         string first = inputs[0];
-        double factor = Math.Max(1, totalSeconds / targetSeconds);       // 何倍速にするか
-        int frames = (int)Math.Round(totalSeconds / factor * OutputFps);  // 出力のコマ数（総尺ぴったりで切る）
+        double factor = MainFactor(intro, totalSeconds, targetSeconds);   // 本編を何倍速にするか
+        var (introFrames, mainFrames) = FrameCounts(intro, totalSeconds, targetSeconds);
+        int frames = introFrames + mainFrames;                            // 出力のコマ数（総尺ぴったりで切る）
         double seconds = (double)frames / OutputFps;                      // 出力の長さ
-        double cut = totalSeconds - introSeconds * factor;                // 元動画で「完成品」が始まる位置
         // 動画のプレビューなら、作るのは最初の clip.Seconds 秒だけ（BGM もその長さで切る。フェードアウトの位置は本物のまま）
         if (clip != null) frames = Math.Min(frames, (int)Math.Round(clip.Seconds * OutputFps));
         double made = (double)frames / OutputFps;                         // 実際に作る長さ
-        // 本編は、作る長さのぶん（と少しの余り）だけ元の動画を読む。全部作るときは、完成品の手前まで（冒頭移動なし: 全部）
-        double mainOut = made - (introSeconds > 0 ? introSeconds : 0);
-        string[] mainLimit = clip == null
-            ? (introSeconds > 0 ? ["-t", Sec(cut)] : [])
-            : ["-t", Sec(Math.Min(introSeconds > 0 ? cut : totalSeconds, (Math.Max(0, mainOut) + 0.2) * factor))];
+        // 本編で読む元の長さ。動画のプレビューなら、作る長さのぶん（と少しの余り）だけ
+        double mainSource = MainSourceSeconds(intro, totalSeconds);
+        double mainRead = clip == null ? mainSource
+            : Math.Min(mainSource, (Math.Max(0, made - (double)introFrames / OutputFps) + 0.2) * factor);
 
-        // 拾う間隔がキーフレーム間隔以上なら、キーフレームだけ読めば足りる（大幅に速い）
-        bool keyframesOnly = await GetKeyframeIntervalAsync(first) <= factor / OutputFps;
+        double keyInterval = await GetKeyframeIntervalAsync(first);
         string? hdr = await GetHdrTransferAsync(first);
-
         var durations = await DurationsAsync(inputs);
-        string[] source = await SourceArgsAsync(work, "list.txt", inputs, durations, ct);
-        string[] skip = keyframesOnly ? ["-skip_frame", "nokey"] : [];
-        // 時刻を factor 分の1に縮めてから 30fps で拾う（細かい時間単位で縮めるのでずれず、最後のコマも捨てない）
-        string pick = $"settb=AVTB,setpts=(PTS-STARTPTS)/{factor.ToString("0.######", Inv)},fps={OutputFps}:eof_action=pass";
-
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-y" };
-        string chain;
-        if (introSeconds > 0)
+        var parts = new List<string>(); // つなぐ部分（フィルター）。並べた順に出来上がりになる
+        bool keyframesOnly = false;
+
+        // 元の動画の from 秒目から length 秒（null なら終わりまで）を、speed 倍速の 30fps にする部分を足す。
+        // その時刻を含むファイルから読む（つないだリストの途中へ飛ぶと、音の入っていない動画では ffmpeg の時刻の丸めの
+        // せいで飛べず、先頭から読み直して遅くなることがあるため）
+        async Task AddPart(double from, double? length, double speed, string extra = "")
         {
-            // 最後（完成品）とそれ以外を別々に読み、完成品を先にしてつなぐ。元動画はどこも1回しか読まない。
-            // 完成品は、それが始まるファイルから読む（つないだリストの途中へ飛ぶと、音の入っていない動画では
-            // ffmpeg の時刻の丸めのせいで飛べず、先頭から読み直して遅くなることがあるため）
-            var (k, local) = Locate(durations, cut);
-            string[] tail = await SourceArgsAsync(work, "tail.txt", inputs.Skip(k).ToList(), durations.Skip(k).ToList(), ct);
-            args.AddRange([.. skip, "-ss", Sec(local), .. tail]);
-            args.AddRange([.. skip, .. mainLimit, .. source]);
-            int introFrames = (int)Math.Round(introSeconds * OutputFps);
-            chain = $"[0:v]{pick},trim=end_frame={introFrames}{IntroFades(introFrames, introFadeIn, introFadeOut)}[end];" +
-                    $"[1:v]{pick}[main];[end][main]concat=n=2:v=1:a=0";
+            int n = parts.Count;
+            var (k, local) = Locate(durations, from);
+            string[] source = await SourceArgsAsync(work, $"list{n}.txt", inputs.Skip(k).ToList(), durations.Skip(k).ToList(), ct);
+            // 拾う間隔がキーフレーム間隔以上なら、キーフレームだけ読めば足りる（大幅に速い）
+            bool keyOnly = keyInterval <= speed / OutputFps;
+            keyframesOnly |= keyOnly && speed == factor;
+            if (keyOnly) args.AddRange(["-skip_frame", "nokey"]);
+            if (local > 0) args.AddRange(["-ss", Sec(local)]);
+            if (length is { } t) args.AddRange(["-t", Sec(t)]);
+            args.AddRange(source);
+            // 時刻を speed 分の1に縮めてから 30fps で拾う（細かい時間単位で縮めるのでずれず、最後のコマも捨てない）
+            parts.Add($"[{n}:v]settb=AVTB,setpts=(PTS-STARTPTS)/{speed.ToString("0.######", Inv)}," +
+                      $"fps={OutputFps}:eof_action=pass{extra}");
+        }
+
+        if (intro != null)
+        {
+            // 冒頭の部分。コマ数ちょうどで切るので、少し長めに読む（元の動画の終わりまでなら、それ以上は読まれない）
+            await AddPart(intro.Start, intro.End - intro.Start + 2 * intro.Speed / OutputFps, intro.Speed,
+                $",trim=end_frame={introFrames}{IntroFades(introFrames, intro.FadeIn, intro.FadeOut)}");
+        }
+        if (intro is { Copy: false })
+        {
+            // 移したなら、本編は冒頭に持っていった部分の前と後ろをつなぐ。元の動画はどこも1回しか読まない
+            if (intro.Start > 0 && mainRead > 0) await AddPart(0, Math.Min(intro.Start, mainRead), factor);
+            double after = mainRead - intro.Start;
+            if (intro.End < totalSeconds && after > 0) await AddPart(intro.End, clip != null ? after : null, factor);
         }
         else
         {
-            args.AddRange([.. skip, .. mainLimit, .. source]);
-            chain = $"[0:v]{pick}";
+            await AddPart(0, clip != null ? mainRead : null, factor);
         }
+        string chain = parts.Count == 1 ? parts[0]
+            : string.Concat(parts.Select((p, i) => $"{p}[p{i}];")) +
+              string.Concat(parts.Select((_, i) => $"[p{i}]")) + $"concat=n={parts.Count}:v=1:a=0";
         string filter = await FinishVideoAsync(work, chain, hdr, layout, caption, seconds, ct)
                         + (clip != null ? ",scale=360:640" : "") + "[v]";
 
@@ -252,8 +325,7 @@ public static class Ffmpeg
             // 曲が短ければ足りる回数だけ繰り返し、動画の長さで切ってからフェードをかける
             int loops = bgm.Seconds > 0 ? Math.Max(0, (int)Math.Ceiling(made / bgm.Seconds) - 1) : 0;
             args.AddRange(["-stream_loop", loops.ToString(Inv), "-i", bgm.File]);
-            int index = introSeconds > 0 ? 2 : 1;
-            filter += $";[{index}:a]atrim=duration={Sec(made)},asetpts=PTS-STARTPTS";
+            filter += $";[{parts.Count}:a]atrim=duration={Sec(made)},asetpts=PTS-STARTPTS";
             if (bgm.GainDb != 0) filter += $",volume={Sec(bgm.GainDb)}dB";
             // 上げたときに 0 dB を超える部分は、音割れしないよう少し手前（-0.3 dB）で抑える
             if (bgm.GainDb > 0) filter += ",alimiter=limit=0.966:level=false";
@@ -355,15 +427,14 @@ public static class Ffmpeg
     /// 元の動画はその3か所しか読まないので、PC の性能にほとんど左右されない。
     /// </summary>
     public static async Task<List<PreviewFrame>> RenderPreviewAsync(IReadOnlyList<string> inputs, double totalSeconds,
-        double targetSeconds, double introSeconds, Layout layout, Caption? caption, CancellationToken ct)
+        double targetSeconds, Intro? intro, Layout layout, Caption? caption, CancellationToken ct)
     {
+        CheckIntro(intro, totalSeconds, targetSeconds);
         string work = Path.Combine(Path.GetTempPath(), $"timelapse_{Guid.NewGuid():N}");
         Directory.CreateDirectory(work);
         try
         {
-            double factor = Math.Max(1, totalSeconds / targetSeconds);
-            double seconds = Math.Round(totalSeconds / factor * OutputFps) / OutputFps; // 出来上がりの長さ
-            double cut = totalSeconds - introSeconds * factor;                         // 元動画で「完成品」が始まる位置
+            double seconds = OutputSeconds(intro, totalSeconds, targetSeconds); // 出来上がりの長さ
             var durations = await DurationsAsync(inputs);
             string filter = await FinishVideoAsync(work, "[0:v]null", await GetHdrTransferAsync(inputs[0]), layout,
                 caption, seconds, ct) + ",scale=360:640[v]";
@@ -371,9 +442,8 @@ public static class Ffmpeg
             var frames = new List<PreviewFrame>();
             foreach (double t in new[] { 0, seconds / 2, seconds - 1.0 / OutputFps })
             {
-                // 出来上がりの t 秒目が、元の動画の何秒目か（完成品を冒頭に移している場合も考える）
-                double src = introSeconds > 0 && t < introSeconds ? cut + t * factor
-                    : (t - Math.Max(0, introSeconds)) * factor;
+                // 出来上がりの t 秒目が、元の動画の何秒目か（冒頭に持ってきた部分も考える）
+                double src = SourceTime(intro, totalSeconds, targetSeconds, t);
                 var (k, local) = Locate(durations, Math.Clamp(src, 0, Math.Max(0, totalSeconds - 0.1)));
                 string png = Path.Combine(work, $"preview{frames.Count}.png");
                 string stderr = "";
@@ -395,6 +465,40 @@ public static class Ffmpeg
         finally
         {
             try { Directory.Delete(work, true); } catch { }
+        }
+    }
+
+    /// <summary>HDR 動画（iPhone などの HLG / PQ）か。そのまま再生すると色が白っぽくなる。</summary>
+    public static async Task<bool> IsHdrAsync(string file) => await GetHdrTransferAsync(file) != null;
+
+    /// <summary>
+    /// 冒頭を選ぶ画面用。元の動画（つないだもの）の t 秒目の画を、高さ height の PNG で返す（HDR は普通の色に直す）。
+    /// その画面で動画を再生できないとき（HEVC の拡張機能が無い・HDR など）に、バーを動かした位置の画として出す。
+    /// </summary>
+    public static async Task<byte[]> RenderSourceFrameAsync(IReadOnlyList<string> inputs, IReadOnlyList<double> durations,
+        double t, int height, CancellationToken ct)
+    {
+        var (k, local) = Locate(durations, Math.Clamp(t, 0, Math.Max(0, durations.Sum() - 0.1)));
+        string? hdr = await GetHdrTransferAsync(inputs[k]);
+        string vf = (hdr != null
+            ? $"zscale=tin={hdr}:pin=bt2020:min=bt2020nc:t=bt709:p=bt709:m=bt709:npl=203:r=tv,format=yuv420p,"
+            : "") + $"scale=-2:{height}";
+        string png = Path.Combine(Path.GetTempPath(), $"timelapse-frame-{Guid.NewGuid():N}.png");
+        try
+        {
+            string stderr = "";
+            // 終わりぎわは画が無いことがあるので、そのときは 2 秒前を描く（RenderPreviewAsync と同じ）
+            foreach (double at in new[] { local, Math.Max(0, local - 2) })
+            {
+                (_, _, stderr) = await RunAsync(FfmpegPath,
+                    ["-hide_banner", "-loglevel", "error", "-y", "-ss", Sec(at), "-i", inputs[k], "-vf", vf, "-frames:v", "1", png]);
+                if (File.Exists(png)) return await File.ReadAllBytesAsync(png, ct);
+            }
+            throw new InvalidOperationException("画を作れませんでした。\n" + stderr.Trim());
+        }
+        finally
+        {
+            try { File.Delete(png); } catch { }
         }
     }
 

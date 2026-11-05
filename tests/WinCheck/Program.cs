@@ -83,20 +83,34 @@ static class Program
         Check("エンコーダーが無くてもプレビューはできる（動画のプレビューは動画を作るのでできない）",
             w.PreviewButton.IsEnabled && !w.StartButton.IsEnabled && !w.PreviewVideoButton.IsEnabled);
         Set("_encoder", "h264_mf");
-        Check("フェードの初期値（BGM 0.5 秒・完成品 0.3 秒）", w.FadeInBox.Text == "0.5" && w.FadeOutBox.Text == "0.5"
-            && w.IntroFadeInBox.Text == "0.3" && w.IntroFadeOutBox.Text == "0.3" && w.IntroFadeInBox.IsEnabled);
-        w.IntroFadeInBox.Text = "3";
-        w.IntroFadeOutBox.Text = "2.5"; // 合計 5.5 秒は、冒頭に移す 5 秒より長い
+        var intro = Get<IntroChoice>("_intro");
+        Check("冒頭の初期値（最後の 5 秒を移す・完成品のフェード 0.3 秒・BGM のフェード 0.5 秒）",
+            w.FadeInBox.Text == "0.5" && w.FadeOutBox.Text == "0.5" && intro == new IntroChoice(false, 0, 0, "5", false, "0.3", "0.3")
+            && w.IntroSummary.Text == "最後の 5 秒を移す（フェード 0.3／0.3 秒）" && w.IntroButton.IsEnabled, w.IntroSummary.Text);
+        Set("_intro", intro with { FadeIn = "3", FadeOut = "2.5" }); // 合計 5.5 秒は、冒頭の 5 秒より長い
+        Refresh();
         Check("完成品のフェードが長すぎると作れない", w.InfoText.Text.StartsWith("完成品のフェード") && !w.StartButton.IsEnabled,
             w.InfoText.Text);
         w.IntroCheck.IsChecked = false;
-        Check("冒頭に移さないなら、完成品のフェードは見ない・触れない",
-            w.StartButton.IsEnabled && !w.IntroFadeInBox.IsEnabled && !w.IntroFadeOutBox.IsEnabled, w.InfoText.Text);
+        Check("冒頭に持ってこないなら、冒頭の設定は見ない・選べない", w.StartButton.IsEnabled && !w.IntroButton.IsEnabled, w.InfoText.Text);
         w.IntroCheck.IsChecked = true;
-        w.IntroFadeInBox.Text = "0.3";
-        w.IntroFadeOutBox.Text = "０．３"; // 全角でも読める
+        Set("_intro", intro with { FadeOut = "０．３" }); // 全角でも読める
+        Refresh();
         Check("完成品のフェード（全角）", w.StartButton.IsEnabled, w.InfoText.Text);
-        w.IntroFadeOutBox.Text = "0.3"; // 全角のままだと欄が狭くて途中で切れて見え、スクリーンショットがまぎらわしいので戻す
+        Set("_intro", intro with { Pick = true });
+        Refresh();
+        Check("見ながら選ぶで、まだ選んでいなければ作れない", w.InfoText.Text.Contains("「冒頭を選ぶ…」") && !w.StartButton.IsEnabled
+                                                       && w.IntroSummary.Text.Contains("まだ選んでいません"), w.InfoText.Text);
+        Set("_intro", intro with { Pick = true, Start = 3000, End = 3125 });
+        Refresh();
+        Check("見ながら選んだ範囲（2分05秒を 5 秒に）", w.StartButton.IsEnabled
+            && w.IntroSummary.Text == "50:00〜52:05 を 5 秒にして移す（フェード 0.3／0.3 秒）"
+            && w.InfoText.Text.StartsWith("合計 1:00:00 → 2:59（20倍速）") // 本編は 3475 秒を 174 秒に,
+            $"{w.IntroSummary.Text} / {w.InfoText.Text}");
+        Call("RefreshList");
+        Check("動画を入れ替えたら、見ながら選んだ範囲は選び直す", !Get<IntroChoice>("_intro").HasRange && !w.StartButton.IsEnabled);
+        Set("_intro", intro);
+        Refresh();
 
         w.TextCheck.IsChecked = true;
         Check("テキストが空なら作れない", w.InfoText.Text == "入れるテキストを入力してください" && !w.StartButton.IsEnabled
@@ -233,12 +247,15 @@ static class Program
         Check("音量 +24 dB でも音割れしない", louderPeak <= 0, $"最大 {songPeak} + 24 → {louderPeak} dB");
 
         await CheckOtherPathsAsync(work, video, video2, total, encoder, bgm);
+        await CheckIntroRangesAsync(work, encoder, bgm);
+        _video2 = video2;
 
         // 動画のプレビュー: 完成品 1 秒＋本編 2 秒＝最初の 3 秒だけを 360×640・BGM 入りで。
         // 中身は、同じ設定で作成した動画（faded）の最初の 3 秒と同じはず（大きさだけ違う）
         _clipPath = Path.Combine(work, "動画 プレビュー.mp4");
         var clipWatch = Stopwatch.StartNew();
-        await Ffmpeg.RenderPreviewClipAsync([video], total, 5, 1, 0.3, 0.3, Ffmpeg.Layout.Crop, bgm, null, encoder, 3,
+        await Ffmpeg.RenderPreviewClipAsync([video], total, 5, Ffmpeg.Intro.Last(total, 5, 1, false, 0.3, 0.3), Ffmpeg.Layout.Crop,
+            bgm, null, encoder, 3,
             _clipPath, new Progress<Ffmpeg.Progress>(_ => { }), CancellationToken.None);
         double clipTime = clipWatch.Elapsed.TotalSeconds;
         string clipInfo = await FfprobeAsync("-v", "error", "-show_entries", "stream=codec_type,width,height,duration",
@@ -273,12 +290,12 @@ static class Program
         await FfmpegAsync("-f", "lavfi", "-i", "testsrc2=s=960x540:r=30:d=10", "-c:v", "mpeg4", "-q:v", "5", wide);
         try
         {
-            string blurred = await Ffmpeg.ConvertAsync([wide], 10, 5, 0, Ffmpeg.Layout.Blur, null, null, "blur", encoder, NoProgress, ct);
-            string cropped = await Ffmpeg.ConvertAsync([wide], 10, 5, 0, Ffmpeg.Layout.Crop, null, null, "crop", encoder, NoProgress, ct);
+            string blurred = await Ffmpeg.ConvertAsync([wide], 10, 5, null, Ffmpeg.Layout.Blur, null, null, "blur", encoder, NoProgress, ct);
+            string cropped = await Ffmpeg.ConvertAsync([wide], 10, 5, null, Ffmpeg.Layout.Crop, null, null, "crop", encoder, NoProgress, ct);
             string info = await VideoInfoAsync(blurred);
             Check("横向きの動画: 全体を残す（ぼかした背景）", info == "1080,1920,150"
                                                        && await FrameHashAsync(blurred) != await FrameHashAsync(cropped), info);
-            var stills = await Ffmpeg.RenderPreviewAsync([wide], 10, 5, 0, Ffmpeg.Layout.Blur, null, ct);
+            var stills = await Ffmpeg.RenderPreviewAsync([wide], 10, 5, null, Ffmpeg.Layout.Blur, null, ct);
             Check("横向きの動画: ぼかした背景のプレビュー（静止画）", stills.Count == 3);
         }
         catch (Exception ex)
@@ -294,8 +311,8 @@ static class Program
         {
             var detect = typeof(Ffmpeg).GetMethod("GetHdrTransferAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
             string? trc = await (Task<string?>)detect.Invoke(null, [hdr])!;
-            string sdr = await Ffmpeg.ConvertAsync([hdr], 10, 5, 1, Ffmpeg.Layout.Crop, null, null, "hdr", encoder, NoProgress, ct,
-                introFadeIn: 0.3, introFadeOut: 0.3);
+            string sdr = await Ffmpeg.ConvertAsync([hdr], 10, 5, Ffmpeg.Intro.Last(10, 5, 1, false, 0.3, 0.3), Ffmpeg.Layout.Crop,
+                null, null, "hdr", encoder, NoProgress, ct);
             string info = await VideoInfoAsync(sdr);
             Check("HDR（HLG）の動画: 普通の色に直して作れる", trc == "arib-std-b67" && info == "1080,1920,150", $"{trc} / {info}");
         }
@@ -310,8 +327,8 @@ static class Program
         try
         {
             var stages = new List<string>();
-            string fast = await Ffmpeg.ConvertAsync([keyed], 30, 5, 1, Ffmpeg.Layout.Crop, bgm, null, "fast", encoder,
-                new SyncProgress<Ffmpeg.Progress>(p => stages.Add(p.Stage)), ct, introFadeIn: 0.3, introFadeOut: 0.3);
+            string fast = await Ffmpeg.ConvertAsync([keyed], 30, 5, Ffmpeg.Intro.Last(30, 5, 1, false, 0.3, 0.3), Ffmpeg.Layout.Crop,
+                bgm, null, "fast", encoder, new SyncProgress<Ffmpeg.Progress>(p => stages.Add(p.Stage)), ct);
             string info = await VideoInfoAsync(fast);
             Check("キーフレームだけ読む高速モード", stages.Contains("変換中（高速モード）") && info == "1080,1920,150",
                 $"{string.Join(" / ", stages.Distinct())} / {info}");
@@ -325,14 +342,124 @@ static class Program
         try
         {
             double total2 = await Ffmpeg.GetDurationAsync(video2);
-            string joined = await Ffmpeg.ConvertAsync([video, video2], total + total2, 5, 1, Ffmpeg.Layout.Crop, bgm, null, "joined",
-                encoder, NoProgress, ct, introFadeIn: 0.3, introFadeOut: 0.3);
+            string joined = await Ffmpeg.ConvertAsync([video, video2], total + total2, 5,
+                Ffmpeg.Intro.Last(total + total2, 5, 1, false, 0.3, 0.3), Ffmpeg.Layout.Crop, bgm, null, "joined", encoder, NoProgress, ct);
             string info = await VideoInfoAsync(joined);
             Check("2本をつないで作れる", info == "1080,1920,150", info);
         }
         catch (Exception ex)
         {
             Check("2本をつないで作れる", false, ex.Message);
+        }
+    }
+
+    static string? _ramp, _video2; // 冒頭を選ぶ画面のテストに使う動画
+
+    /// <summary>
+    /// 見ながら選んだ範囲を冒頭に持ってくる（移す・コピー・ゆっくり）。明るさが時刻で決まる動画（0 秒で黒 16、1 秒ごとに +7）を
+    /// 使い、出来上がりの各コマの明るさから元の動画の何秒目かを読んで、Ffmpeg.SourceTime の当てはめと同じかを確かめる。
+    /// 静止画のプレビュー・動画のプレビューも、同じ当てはめになっているかを確かめる。
+    /// </summary>
+    static async Task CheckIntroRangesAsync(string work, string encoder, Ffmpeg.Bgm bgm)
+    {
+        var ct = CancellationToken.None;
+        string ramp = Path.Combine(work, "明るさ 時刻.mp4");
+        await FfmpegAsync("-f", "lavfi", "-i", "nullsrc=s=540x960:r=30:d=30,geq=lum='16+T*7':cb=128:cr=128",
+            "-c:v", "mpeg4", "-q:v", "2", ramp);
+        _ramp = ramp;
+        const double total = 30, target = 5;
+
+        // 出来上がりのコマの明るさから読んだ秒と、当てはめの秒を比べる。ずれたコマ（つなぎ目の 1 コマなど）を数える
+        string Compare(List<double> luma, Ffmpeg.Intro intro, int count, out int bad)
+        {
+            var off = new List<string>();
+            for (int n = 0; n < Math.Min(count, luma.Count); n++)
+            {
+                double t = n / 30.0, want = Ffmpeg.SourceTime(intro, total, target, t), got = (luma[n] - 16) / 7;
+                double speed = t < intro.Seconds ? intro.Speed : Ffmpeg.MainFactor(intro, total, target);
+                if (Math.Abs(got - want) > 0.35 + speed / 30) off.Add($"{n}:{got:0.0}/{want:0.0}");
+            }
+            bad = off.Count + Math.Max(0, count - luma.Count);
+            return $"{luma.Count} コマ" + (off.Count > 0 ? " / ずれ " + string.Join(" ", off.Take(8)) : "")
+                + " / " + string.Join(" ", new[] { 0, 29, 30, 79, 80, 149 }.Where(i => i < luma.Count)
+                    .Select(i => $"{i}:{(luma[i] - 16) / 7:0.0}"));
+        }
+
+        var cases = new (string Name, Ffmpeg.Intro Intro)[]
+        {
+            // 10〜16 秒を 1 秒に（6 倍速）。本編は 0〜10 秒と 16〜30 秒（24 秒を 4 秒に。6 倍速）
+            ("移す（途中の 6 秒を 1 秒に）", new(10, 16, 1)),
+            // 本編は全部（30 秒を 4 秒に。7.5 倍速）
+            ("コピー（本編にも残す）", new(10, 16, 1, Copy: true)),
+            // 0.5 秒を 2 秒に（0.25 倍の速さ）。本編は 29.5 秒を 3 秒に
+            ("ゆっくり（0.5 秒を 2 秒に）", new(20, 20.5, 2)),
+            // いちばん最初の部分を移す（本編は、そのあとだけ）
+            ("移す（最初の 3 秒）", new(0, 3, 1)),
+        };
+        for (int c = 0; c < cases.Length; c++)
+        {
+            var (name, intro) = cases[c];
+            try
+            {
+                string output = await Ffmpeg.ConvertAsync([ramp], total, target, intro, Ffmpeg.Layout.Crop, null, null,
+                    $"range{c}", encoder, NoProgress, ct);
+                string detail = Compare(await LumaAsync(output), intro, 150, out int bad);
+                Check($"冒頭の範囲: {name}", bad <= 2, detail);
+            }
+            catch (Exception ex)
+            {
+                Check($"冒頭の範囲: {name}", false, ex.Message);
+            }
+        }
+
+        // 数値で（最後の 1 秒を移す）は、今までと同じ（全体を 6 倍速にして、最後の 1 秒を冒頭へ）
+        var last = Ffmpeg.Intro.Last(total, target, 1);
+        Check("数値で（最後の 1 秒）は今までと同じ範囲・倍速", last == new Ffmpeg.Intro(24, 30, 1)
+            && Ffmpeg.MainFactor(last, total, target) == 6 && Ffmpeg.OutputSeconds(last, total, target) == 5, $"{last}");
+
+        try
+        {
+            // 静止画のプレビュー（最初・真ん中・最後）も同じ当てはめ
+            var intro = cases[0].Intro;
+            var stills = await Ffmpeg.RenderPreviewAsync([ramp], total, target, intro, Ffmpeg.Layout.Crop, null, ct);
+            var notes = new List<string>();
+            bool ok = stills.Count == 3;
+            for (int i = 0; i < stills.Count; i++)
+            {
+                string png = Path.Combine(work, $"still{i}.png");
+                await File.WriteAllBytesAsync(png, stills[i].Png, ct);
+                double got = ((await LumaAsync(png))[0] - 16) / 7, want = Ffmpeg.SourceTime(intro, total, target, stills[i].Seconds);
+                notes.Add($"{stills[i].Seconds:0.00}秒→{got:0.0}/{want:0.0}");
+                ok &= Math.Abs(got - want) < 0.6;
+            }
+            Check("冒頭の範囲: 静止画のプレビューも同じ位置", ok, string.Join(" ", notes));
+
+            // 動画のプレビュー（最初の 3 秒）も、同じ当てはめで作る
+            string clip = Path.Combine(work, "範囲 プレビュー.mp4");
+            await Ffmpeg.RenderPreviewClipAsync([ramp], total, target, intro, Ffmpeg.Layout.Crop, bgm, null, encoder, 3, clip,
+                NoProgress, ct);
+            var clipLuma = await LumaAsync(clip);
+            string detail = Compare(clipLuma, intro, 90, out int bad);
+            Check("冒頭の範囲: 動画のプレビューも同じ", bad <= 2 && clipLuma.Count == 90, detail);
+        }
+        catch (Exception ex)
+        {
+            Check("冒頭の範囲: プレビュー", false, ex.Message);
+        }
+
+        try
+        {
+            // 冒頭を選ぶ画面で、再生できないときに出す画（つないだ動画の 2 本目の途中）
+            byte[] png = await Ffmpeg.RenderSourceFrameAsync([ramp, ramp], [total, total], 40, 360, ct);
+            string file = Path.Combine(work, "画.png");
+            await File.WriteAllBytesAsync(file, png, ct);
+            double got = ((await LumaAsync(file))[0] - 16) / 7;
+            Check("冒頭を選ぶ画面の画: つないだ動画の 40 秒目（2 本目の 10 秒目）",
+                Math.Abs(got - 10) < 0.5 && BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20)) == 360, $"{got:0.0} 秒の画");
+        }
+        catch (Exception ex)
+        {
+            Check("冒頭を選ぶ画面の画", false, ex.Message);
         }
     }
 
@@ -347,7 +474,8 @@ static class Program
     static async Task CheckPreviewAsync(string video, string video2, double total, string text, (string File, string Family, string Missing) font)
     {
         Task<List<Ffmpeg.PreviewFrame>> Render(List<string> inputs, double seconds, double intro, Ffmpeg.Caption? caption) =>
-            Ffmpeg.RenderPreviewAsync(inputs, seconds, 5, intro, Ffmpeg.Layout.Crop, caption, CancellationToken.None);
+            Ffmpeg.RenderPreviewAsync(inputs, seconds, 5, Ffmpeg.Intro.Last(seconds, 5, intro), Ffmpeg.Layout.Crop, caption,
+                CancellationToken.None);
         static (int W, int H) PngSize(byte[] png) =>
             (BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16)), BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20)));
         static bool Same(Ffmpeg.PreviewFrame a, Ffmpeg.PreviewFrame b) => a.Png.AsSpan().SequenceEqual(b.Png);
@@ -434,6 +562,7 @@ static class Program
             CheckLayout(w, 1480, 720, "標準"); // MainWindow.xaml の Width / Height
             CheckLayout(w, 1240, 650, "最小"); // MainWindow.xaml の MinWidth / MinHeight
             CheckLayout(w, 1920, 1030, "最大化"); // フルHDの画面いっぱい（プレビューが大きくなる）
+            CheckIntroWindow(w, true, "ライト");
 
             // 設定画面からダークにする（実際の操作と同じ道すじで、設定にも「Dark」が入る）
             var appSettings = (AppSettings)typeof(MainWindow).GetField("_settings", F)!.GetValue(w)!;
@@ -469,6 +598,7 @@ static class Program
             settings.Close();
             CheckLayout(w, 1480, 720, "ダーク標準");
             CheckLayout(w, 1240, 650, "ダーク最小");
+            CheckIntroWindow(w, false, "ダーク");
             // 作成が終わったあと（「出力フォルダを開く」が出て、下の段が狭くなる）でも収まるか
             string status = w.StatusText.Text;
             w.OpenFolderButton.Visibility = Visibility.Visible;
@@ -481,8 +611,7 @@ static class Program
             // 次の起動で戻るか確かめるため、最初とは違う値にしておく
             ((RadioButton)w.PlatformPanel.Children[2]).IsChecked = true; // TikTok
             w.LengthBox.Text = "4:30";
-            w.IntroBox.Text = "7";
-            w.IntroFadeInBox.Text = "0.5";
+            typeof(MainWindow).GetField("_intro", F)!.SetValue(w, new IntroChoice(true, 10, 20, "7", true, "0.5", "0.3"));
             w.BlurRadio.IsChecked = true;
             w.FadeInBox.Text = "2";
             w.VolumeSlider.Value = -4;
@@ -542,6 +671,130 @@ static class Program
         Check("動画のプレビュー: 「最初」に戻すと静止画（動画は止める）",
             w.PreviewImage.IsVisible && !w.PreviewVideo.IsVisible && w.PreviewCaption.Text.StartsWith("最初")
             && w.PreviewStaleText.Text.Contains("「プレビュー」"), w.PreviewCaption.Text);
+    }
+
+    /// <summary>
+    /// 冒頭を選ぶ画面。明るさが時刻で決まる動画（30 秒）と 30 秒の動画の 2 本をつないだもの（60 秒）を、5 秒にする設定で開く。
+    /// full なら、選びかた・ここから／ここまで・移す／コピー・入力チェック・画が出るかも確かめる。どちらも配置と見た目を確かめる。
+    /// </summary>
+    static void CheckIntroWindow(MainWindow owner, bool full, string label)
+    {
+        if (_ramp == null || _video2 == null)
+        {
+            Check($"冒頭を選ぶ画面（{label}）", false, "前のテストが通っていないので確かめられない");
+            return;
+        }
+        IntroWindow? iw = null;
+        try
+        {
+            iw = new IntroWindow([_ramp, _video2], [30, 30], 5, new IntroChoice(false, 0, 0, "1", false, "0.3", "0.3")) { Owner = owner };
+            iw.Show();
+            AllowLargeWindow(iw);
+            var win = iw;
+            T Get<T>(string field) => (T)typeof(IntroWindow).GetField(field, F)!.GetValue(win)!;
+            void Set(string field, object value) => typeof(IntroWindow).GetField(field, F)!.SetValue(win, value);
+            void Call(string method, params object?[] args) =>
+                typeof(IntroWindow).GetMethod(method, F)!.Invoke(win, args.Length == 0 ? null : args);
+            IntroChoice Current() => (IntroChoice)typeof(IntroWindow).GetMethod("Current", F)!.Invoke(win, null)!;
+
+            if (full)
+            {
+                // 数値で（最後の 1 秒）: 60 秒を 5 秒に → 12 倍速。最後の 12 秒（48〜60 秒）
+                Check("冒頭を選ぶ画面: 数値でなら、最後の 1 秒の範囲（48〜60 秒）",
+                    iw.LastRadio.IsChecked == true && iw.OverallBar.SelStart == 48 && iw.OverallBar.SelEnd == 60
+                    && !iw.ZoomBar.CanSelect && !iw.FromButton.IsEnabled && iw.OkButton.IsEnabled
+                    && iw.SpeedText.Text.Contains("12 倍速") && iw.OrderMainText.Text == "本編 0:04（選んだ所は入らない・12倍速）",
+                    $"{iw.OverallBar.SelStart}〜{iw.OverallBar.SelEnd} / {iw.SpeedText.Text} / {iw.OrderMainText.Text}");
+                iw.SecondsBox.Text = "2";
+                Check("冒頭を選ぶ画面: 「冒頭の長さ」と「最後の N 秒」は同じ数", iw.LastBox.Text == "2" && iw.OverallBar.SelStart == 36,
+                    $"{iw.LastBox.Text} / {iw.OverallBar.SelStart}");
+                iw.SecondsBox.Text = "1";
+
+                iw.PickRadio.IsChecked = true;
+                Check("冒頭を選ぶ画面: 見ながら選ぶ（最初は数値でと同じ範囲）", iw.ZoomBar.CanSelect && iw.FromButton.IsEnabled
+                    && Current() is { Pick: true, Start: 48, End: 60 } && iw.OkButton.IsEnabled);
+                Set("_pos", 10.0);
+                Call("FromButton_Click", iw.FromButton, new RoutedEventArgs());
+                Set("_pos", 16.0);
+                Call("ToButton_Click", iw.ToButton, new RoutedEventArgs());
+                // 10〜16 秒を 1 秒に（6 倍速）。本編は 54 秒を 4 秒に（13.5 倍速）
+                Check("冒頭を選ぶ画面: 「ここから」「ここまで」で 10〜16 秒",
+                    Current() is { Start: 10, End: 16 } && iw.SpeedText.Text == "選んだ 6秒 を 1 秒にして入れます（6 倍速）"
+                    && iw.OrderMainText.Text == "本編 0:04（選んだ所は入らない・13.5倍速）" && iw.HintText.Text.Contains("0:10〜0:16"),
+                    $"{iw.SpeedText.Text} / {iw.OrderMainText.Text} / {iw.HintText.Text}");
+                iw.CopyRadio.IsChecked = true;
+                Check("冒頭を選ぶ画面: コピーなら本編は全部（15 倍速）", iw.OrderMainText.Text == "本編 0:04（選んだ所も入る・15倍速）",
+                    iw.OrderMainText.Text);
+                iw.SecondsBox.Text = "0";
+                Check("冒頭を選ぶ画面: 長さが 0 秒なら OK できない", !iw.OkButton.IsEnabled && iw.ErrorText.Text.StartsWith("冒頭の長さ"),
+                    iw.ErrorText.Text);
+                iw.SecondsBox.Text = "1";
+                iw.FadeInBox.Text = "1";
+                Check("冒頭を選ぶ画面: フェードが長すぎると OK できない", !iw.OkButton.IsEnabled && iw.ErrorText.Text.StartsWith("完成品のフェード"),
+                    iw.ErrorText.Text);
+                iw.FadeInBox.Text = "0.3";
+                Check("冒頭を選ぶ画面: 選んだ内容", Current() == new IntroChoice(true, 10, 16, "1", true, "0.3", "0.3") && iw.OkButton.IsEnabled,
+                    $"{Current()}");
+
+                // 選んだ内容をメイン画面に戻したときのまとめ（メイン画面の動画は 1 時間の仮のもの）
+                typeof(MainWindow).GetField("_intro", F)!.SetValue(owner, Current());
+                typeof(MainWindow).GetMethod("RefreshInfo", F)!.Invoke(owner, null);
+                Check("メイン画面: 選んだ冒頭のまとめ", owner.IntroSummary.Text == "0:10〜0:16 を 1 秒にしてコピー（フェード 0.3／0.3 秒）",
+                    owner.IntroSummary.Text);
+                typeof(MainWindow).GetField("_intro", F)!.SetValue(owner, new IntroChoice(false, 0, 0, "5", false, "0.3", "0.3"));
+                typeof(MainWindow).GetMethod("RefreshInfo", F)!.Invoke(owner, null);
+
+                // 元の動画が出る（ここで再生できるか、できなければ FFmpeg で描いた画）
+                var frame = new DispatcherFrame();
+                var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+                var watch = Stopwatch.StartNew();
+                timer.Tick += (_, _) => { if (win.ShowsVideo || watch.Elapsed.TotalSeconds > 15) frame.Continue = false; };
+                timer.Start();
+                Dispatcher.PushFrame(frame);
+                timer.Stop();
+                Check("冒頭を選ぶ画面: 元の動画が出る", iw.ShowsVideo, $"{watch.Elapsed.TotalSeconds:0.0}秒");
+                Console.WriteLine($"参考  冒頭を選ぶ画面の再生: {(Get<bool?>("_canPlay") == true ? "ここで再生できた" : "画で表示")}" +
+                                  $"（{iw.VideoNote.Text}）");
+                Pump(TimeSpan.FromSeconds(1));
+            }
+
+            CheckIntroLayout(iw, 1240, 720, $"{label} 標準");
+            CheckIntroLayout(iw, 1000, 660, $"{label} 最小"); // IntroWindow.xaml の MinWidth / MinHeight
+        }
+        catch (Exception ex)
+        {
+            Check($"冒頭を選ぶ画面（{label}）", false, ex.ToString());
+        }
+        finally
+        {
+            iw?.Close();
+        }
+    }
+
+    /// <summary>冒頭を選ぶ画面を width×height にして、切れている部品がないか・動画の枠が 9:16 か・ボタンが窓に収まるか。</summary>
+    static void CheckIntroLayout(IntroWindow w, double width, double height, string label)
+    {
+        w.Width = width;
+        w.Height = height;
+        w.UpdateLayout();
+        bool sized = Math.Abs(w.ActualWidth - width) < 1 && Math.Abs(w.ActualHeight - height) < 1;
+        var root = (FrameworkElement)w.Content;
+        var clipped = Descendants(root).Prepend(root)
+            .Where(e => e.IsVisible && LayoutInformation.GetLayoutClip(e) != null && e is not MediaElement)
+            .Select(e => !string.IsNullOrEmpty(e.Name) ? e.Name : e is TextBlock t ? $"「{t.Text}」" : e.GetType().Name)
+            .ToList();
+        bool Inside(FrameworkElement e)
+        {
+            var corner = e.TranslatePoint(new Point(e.ActualWidth, e.ActualHeight), root);
+            return corner.X <= root.ActualWidth + 0.5 && corner.Y <= root.ActualHeight + 0.5;
+        }
+        double ratio = w.VideoFrame.ActualWidth / w.VideoFrame.ActualHeight;
+        Check($"冒頭を選ぶ画面の配置（{label} {width}×{height}）: 切れている所がない・動画の枠が 9:16",
+            sized && clipped.Count == 0 && Inside(w.CancelButton) && Inside(w.ZoomBar) && Math.Abs(ratio - 9.0 / 16) < 0.01,
+            (sized ? "" : $"窓が {w.ActualWidth}×{w.ActualHeight} にしかならない / ") + string.Join(" / ", clipped)
+            + $" / 枠 {w.VideoFrame.ActualWidth:0}×{w.VideoFrame.ActualHeight:0}");
+        var client = (FrameworkElement)VisualTreeHelper.GetChild(w, 0);
+        Shot($"intro-{label}", client, client.RenderSize);
     }
 
     /// <summary>MediaElement が開けるまで（最大 10 秒）待って、どうなったかを返す。</summary>
@@ -618,8 +871,9 @@ static class Program
         var w = new MainWindow();
         Check("前回の設定に戻る",
             w.PlatformPanel.Children.OfType<RadioButton>().ElementAt(2).IsChecked == true && w.LengthBox.Text == "4:30"
-            && w.IntroCheck.IsChecked == true && w.IntroBox.Text == "7" && w.BlurRadio.IsChecked == true
-            && w.IntroFadeInBox.Text == "0.5" && w.IntroFadeOutBox.Text == "0.3"
+            && w.IntroCheck.IsChecked == true && w.BlurRadio.IsChecked == true
+            // 選びかた・長さ・フェードは覚える。見ながら選んだ範囲は動画ごとなので覚えない
+            && (IntroChoice)typeof(MainWindow).GetField("_intro", F)!.GetValue(w)! == new IntroChoice(true, 0, 0, "7", true, "0.5", "0.3")
             && w.FadeInBox.Text == "2" && w.FadeOutBox.Text == "３" && w.VolumeSlider.Value == -4
             && w.FontBox.SelectedItem?.ToString() == font && w.ColorBox.SelectedIndex == 2 && w.PositionBox.SelectedIndex == 2
             && w.BackBoxRadio.IsChecked == true && w.SizeBox.Text == "100",
@@ -745,8 +999,8 @@ static class Program
     static Task<string> ConvertAsync(string video, double total, string encoder, string suffix,
         Ffmpeg.Bgm? bgm, Ffmpeg.Caption? caption, double intro = 0, string? outputDir = null,
         double introFadeIn = 0, double introFadeOut = 0) =>
-        Ffmpeg.ConvertAsync([video], total, 5, intro, Ffmpeg.Layout.Crop, bgm, caption, suffix, encoder,
-            new Progress<Ffmpeg.Progress>(_ => { }), CancellationToken.None, outputDir, introFadeIn, introFadeOut);
+        Ffmpeg.ConvertAsync([video], total, 5, intro > 0 ? Ffmpeg.Intro.Last(total, 5, intro, false, introFadeIn, introFadeOut) : null,
+            Ffmpeg.Layout.Crop, bgm, caption, suffix, encoder, new Progress<Ffmpeg.Progress>(_ => { }), CancellationToken.None, outputDir);
 
     /// <summary>各コマの明るさ（Y の平均。黒が 16 くらい）を、はじめから順に。</summary>
     static async Task<List<double>> LumaAsync(string video) =>

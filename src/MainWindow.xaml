@@ -101,24 +101,16 @@
                                  VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
                     </StackPanel>
                     <TextBlock x:Name="LengthHint" Style="{StaticResource Note}" Margin="0,2,0,0"/>
-                    <WrapPanel Margin="0,8,0,0">
-                        <CheckBox x:Name="IntroCheck" Content="完成品を冒頭に：最後の" IsChecked="True" VerticalAlignment="Center"
+                    <!-- 冒頭に持ってくる部分（完成品など）。くわしくは「冒頭を選ぶ…」の画面で選ぶ。
+                         まとめの左は、チェックボックスの文字の位置にそろえる -->
+                    <DockPanel Margin="0,8,0,0">
+                        <Button x:Name="IntroButton" DockPanel.Dock="Right" Content="冒頭を選ぶ…" Padding="10,3"
+                                VerticalAlignment="Center" Click="IntroButton_Click"
+                                ToolTip="動画を見ながら、冒頭に持ってくる部分・長さ・フェードを選ぶ"/>
+                        <CheckBox x:Name="IntroCheck" Content="完成品などを冒頭に" IsChecked="True" VerticalAlignment="Center"
                                   Checked="Settings_Changed" Unchecked="Settings_Changed"/>
-                        <TextBox x:Name="IntroBox" Text="5" Width="40" Margin="6,0" Padding="2"
-                                 VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
-                        <TextBlock Text="秒を移す" VerticalAlignment="Center"/>
-                    </WrapPanel>
-                    <!-- 冒頭に移した完成品の部分だけのフェード（黒から出てきて、黒に消えてから本編につなぐ）。0 秒でなし。
-                         左はチェックボックスの文字の位置にそろえる -->
-                    <WrapPanel Margin="28,2,0,0">
-                        <TextBlock Text="フェード イン" VerticalAlignment="Center"/>
-                        <TextBox x:Name="IntroFadeInBox" Text="0.3" Width="40" Margin="4,0" Padding="2"
-                                 VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
-                        <TextBlock Text="アウト" VerticalAlignment="Center"/>
-                        <TextBox x:Name="IntroFadeOutBox" Text="0.3" Width="40" Margin="4,0" Padding="2"
-                                 VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
-                        <TextBlock Text="秒" VerticalAlignment="Center"/>
-                    </WrapPanel>
+                    </DockPanel>
+                    <TextBlock x:Name="IntroSummary" Margin="28,2,0,0" Style="{StaticResource Note}" FontSize="13"/>
                     <TextBlock Text="横向きで撮った動画の場合" FontWeight="SemiBold" Margin="0,8,0,2"/>
                     <RadioButton x:Name="CropRadio" IsChecked="True" Checked="Settings_Changed">
                         <TextBlock Text="中央を切り抜く（左右が切れる）" TextWrapping="Wrap"/>
