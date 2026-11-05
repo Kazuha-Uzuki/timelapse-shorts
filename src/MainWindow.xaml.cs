@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 
@@ -63,9 +64,9 @@ public partial class MainWindow : Window
     string? _lastOutputDir;
     CancellationTokenSource? _cts;
     bool _busy, _ready;
-    Window? _previewWindow; // プレビューの画面（開いていなければ null）
-    readonly Image[] _previewImages = new Image[3];
-    readonly TextBlock[] _previewLabels = new TextBlock[3];
+    List<Ffmpeg.PreviewFrame>? _previewFrames; // プレビュー欄の画（最初・真ん中・最後）。作っていなければ null
+    bool _previewIntro;                         // その画を作ったとき、完成品を冒頭に移していたか
+    string? _previewKey;                        // その画を作ったときの設定（変わったら「古い」と知らせる）
 
     // 変換中にPCがスリープして処理が止まるのを防ぐ（画面が消えるのは構わない）
     [DllImport("kernel32.dll")]
@@ -269,6 +270,7 @@ public partial class MainWindow : Window
     {
         _files.Clear();
         _totalSeconds = 0;
+        SetPreview(null, false);
         RefreshList();
     }
 
@@ -356,7 +358,7 @@ public partial class MainWindow : Window
     void RefreshInfo()
     {
         if (!_ready) return;
-        UpdatePreview();
+        UpdateSample();
         string? error = Validate(out var s);
         if (error != null)
         {
@@ -375,19 +377,37 @@ public partial class MainWindow : Window
                             (TextCheck.IsChecked == true ? "・テキストあり" : "");
         }
         UpdateState();
+        UpdatePreviewStale();
     }
 
-    /// <summary>テキストの見本。文字の色で、縁取りの色を背景にして表示する。</summary>
-    void UpdatePreview()
+    // 背景なしの見本で、動画の代わりにする灰色
+    static readonly Brush SampleVideo = FrozenGradient(Color.FromRgb(0x5d, 0x6d, 0x7e), Color.FromRgb(0xa8, 0x9f, 0x91));
+
+    static Brush FrozenGradient(Color from, Color to)
     {
-        if (FontBox.SelectedItem is FontCatalog.Item font) PreviewText.FontFamily = font.Family;
-        PreviewText.Text = string.IsNullOrWhiteSpace(CaptionBox.Text) ? "ここに見本が出ます" : CaptionBox.Text.Trim();
+        var brush = new LinearGradientBrush(from, to, 0);
+        brush.Freeze();
+        return brush;
+    }
+
+    /// <summary>
+    /// テキストの見本。背景ありは「フチの色の帯に文字」、背景なしは「灰色（動画の代わり）にフチ取りの文字」で、
+    /// 出来上がりに近い見た目にする（正確な見た目はプレビューで確かめる）。
+    /// </summary>
+    void UpdateSample()
+    {
+        if (FontBox.SelectedItem is FontCatalog.Item font) SampleText.FontFamily = font.Family;
+        SampleText.Text = string.IsNullOrWhiteSpace(CaptionBox.Text) ? "ここに見本が出ます" : CaptionBox.Text.Trim();
         if (ColorBox.SelectedItem is ColorPreset c)
         {
-            PreviewText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#" + c.Text));
-            PreviewBorder.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#" + c.Outline));
+            var text = (Color)ColorConverter.ConvertFromString("#" + c.Text);
+            var outline = (Color)ColorConverter.ConvertFromString("#" + c.Outline);
+            SampleText.Foreground = new SolidColorBrush(text);
+            bool box = BackBoxRadio.IsChecked == true;
+            SampleBorder.Background = box ? new SolidColorBrush(outline) : SampleVideo;
+            SampleText.Effect = box ? null : new DropShadowEffect { Color = outline, ShadowDepth = 0, BlurRadius = 5, Opacity = 1 };
         }
-        PreviewBorder.Opacity = TextCheck.IsChecked == true ? 1 : 0.4;
+        SampleBorder.Opacity = TextCheck.IsChecked == true ? 1 : 0.4;
     }
 
     /// <summary>テキストの設定から、変換に渡す内容を作る。やめる場合は false。action は確認の文に使う（「作成」など）。</summary>
@@ -403,7 +423,7 @@ public partial class MainWindow : Window
             return false;
         var color = ColorPresets[Math.Max(0, ColorBox.SelectedIndex)];
         caption = new Ffmpeg.Caption(text, file, family, s.TextSize, color.Text, color.Outline,
-            (Ffmpeg.TextPosition)Math.Max(0, PositionBox.SelectedIndex));
+            (Ffmpeg.TextPosition)Math.Max(0, PositionBox.SelectedIndex), BackBoxRadio.IsChecked == true);
         return true;
     }
 
@@ -461,7 +481,7 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>出来上がりの「最初・真ん中・最後」の画を作って、別の小さな画面に並べる。</summary>
+    /// <summary>出来上がりの「最初・真ん中・最後」の画を作って、右のプレビュー欄に出す。</summary>
     async void PreviewButton_Click(object sender, RoutedEventArgs e)
     {
         if (_files.Count == 0 || Validate(out var s) != null) return;
@@ -481,10 +501,10 @@ public partial class MainWindow : Window
         SetBusy(true);
         try
         {
-            var pngs = await Ffmpeg.RenderPreviewAsync(_files, _totalSeconds, s.Target, s.Intro, layout, caption,
+            var frames = await Ffmpeg.RenderPreviewAsync(_files, _totalSeconds, s.Target, s.Intro, layout, caption,
                 CancellationToken.None);
             StatusText.Text = status;
-            ShowPreview(pngs, s.Intro > 0);
+            SetPreview(frames, s.Intro > 0);
         }
         catch (Exception ex)
         {
@@ -497,56 +517,48 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>プレビューの画面を開く（開いていれば画を差し替える）。</summary>
-    void ShowPreview(IReadOnlyList<byte[]> pngs, bool introMoved)
+    /// <summary>プレビュー欄の画を入れ替える（null で空にする）。今の設定を、その画を作ったときの設定として覚える。</summary>
+    void SetPreview(List<Ffmpeg.PreviewFrame>? frames, bool introMoved)
     {
-        if (_previewWindow == null)
-        {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
-            for (int i = 0; i < 3; i++)
-            {
-                _previewLabels[i] = new TextBlock { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 4) };
-                _previewImages[i] = new Image { Width = 216, Height = 384, Stretch = Stretch.Uniform };
-                var cell = new StackPanel { Margin = new Thickness(6) };
-                cell.Children.Add(_previewLabels[i]);
-                cell.Children.Add(new Border { Background = Brushes.Black, Child = _previewImages[i] });
-                row.Children.Add(cell);
-            }
-            var root = new StackPanel { Margin = new Thickness(10) };
-            root.Children.Add(row);
-            root.Children.Add(new TextBlock
-            {
-                Margin = new Thickness(6, 8, 6, 0),
-                MaxWidth = 680,
-                FontSize = 12,
-                Foreground = Brushes.DimGray,
-                TextWrapping = TextWrapping.Wrap,
-                Text = "仕上がりと同じ処理で描いた画を、縮小して表示しています（音は入りません）。" +
-                       "設定を変えたら、もう一度「プレビュー」を押してください。",
-            });
-            _previewWindow = new Window
-            {
-                Title = "プレビュー",
-                Owner = this,
-                Content = root,
-                SizeToContent = SizeToContent.WidthAndHeight,
-                ResizeMode = ResizeMode.NoResize,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                ShowInTaskbar = false,
-                FontFamily = FontFamily,
-                FontSize = 14,
-            };
-            _previewWindow.Closed += (_, _) => _previewWindow = null;
-            _previewWindow.Show();
-        }
-        string[] names = introMoved ? ["最初（完成品）", "真ん中", "最後"] : ["最初", "真ん中", "最後"];
-        for (int i = 0; i < 3; i++)
-        {
-            _previewLabels[i].Text = names[i];
-            _previewImages[i].Source = LoadPng(pngs[i]);
-        }
-        _previewWindow.Activate();
+        _previewFrames = frames;
+        _previewIntro = introMoved;
+        _previewKey = PreviewKey();
+        ShowPreviewFrame();
+        UpdatePreviewStale();
     }
+
+    void PreviewFrame_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_ready) ShowPreviewFrame();
+    }
+
+    /// <summary>「最初・真ん中・最後」のうち、選ばれている画を表示する。</summary>
+    void ShowPreviewFrame()
+    {
+        int i = PreviewMiddleRadio.IsChecked == true ? 1 : PreviewLastRadio.IsChecked == true ? 2 : 0;
+        string[] names = _previewIntro ? ["最初（完成品）", "真ん中", "最後"] : ["最初", "真ん中", "最後"];
+        if (_previewFrames is { Count: 3 } frames)
+        {
+            PreviewImage.Source = LoadPng(frames[i].Png);
+            PreviewCaption.Text = $"{names[i]}・{Fmt(frames[i].Seconds)} の画";
+            PreviewPlaceholder.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            PreviewImage.Source = null;
+            PreviewCaption.Text = "";
+            PreviewPlaceholder.Visibility = Visibility.Visible;
+        }
+    }
+
+    /// <summary>画の見た目に関わる設定をまとめた文字列（BGM は画に関係ないので含めない）。</summary>
+    string PreviewKey() => string.Join("|", string.Join(";", _files), LengthBox.Text, IntroCheck.IsChecked, IntroBox.Text,
+        BlurRadio.IsChecked, TextCheck.IsChecked, CaptionBox.Text, FontBox.SelectedIndex, ColorBox.SelectedIndex,
+        BackBoxRadio.IsChecked, SizeBox.Text, PositionBox.SelectedIndex);
+
+    /// <summary>表示中のプレビューを作ったあとに設定が変わっていたら、そのことを画の上に出す。</summary>
+    void UpdatePreviewStale() =>
+        PreviewStale.Visibility = _previewFrames != null && PreviewKey() != _previewKey ? Visibility.Visible : Visibility.Collapsed;
 
     static BitmapImage LoadPng(byte[] png)
     {
@@ -591,7 +603,7 @@ public partial class MainWindow : Window
         BgmSelectButton.IsEnabled = Ffmpeg.IsAvailable;
         BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = VolumeSlider.IsEnabled = _bgmFile != null;
         CaptionBox.IsEnabled = FontBox.IsEnabled = SizeBox.IsEnabled = ColorBox.IsEnabled = PositionBox.IsEnabled
-            = TextCheck.IsChecked == true;
+            = BackNoneRadio.IsEnabled = BackBoxRadio.IsEnabled = TextCheck.IsChecked == true;
         bool valid = _files.Count > 0 && _totalSeconds > 0 && Validate(out _) == null;
         PreviewButton.IsEnabled = idle && valid; // プレビューは画像を作るだけなので、エンコーダーは要らない
         StartButton.IsEnabled = idle && _encoder != null && valid;

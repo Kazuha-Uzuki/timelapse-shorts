@@ -18,7 +18,7 @@ static class Program
     const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance;
     static int _failures;
     static MainWindow? _window;        // CheckWindow で作った画面（最後にプレビューの表示も確かめる）
-    static List<byte[]>? _previewPngs; // RunAsync で作ったプレビューの画
+    static List<Ffmpeg.PreviewFrame>? _previewFrames; // RunAsync で作ったプレビューの画
     // 手動実行で「スクリーンショット」を ON にしたときだけ、画面の画像をログに出す（見た目の確認用）
     static readonly bool Shots = Environment.GetEnvironmentVariable("WINCHECK_SHOTS") == "1";
 
@@ -75,7 +75,7 @@ static class Program
         Check("テキストが空なら作れない", w.InfoText.Text == "入れるテキストを入力してください" && !w.StartButton.IsEnabled
                                       && !w.PreviewButton.IsEnabled, w.InfoText.Text);
         w.CaptionBox.Text = "完成まで3時間";
-        Check("テキストあり", w.InfoText.Text.EndsWith("・テキストあり") && w.PreviewText.Text == "完成まで3時間", w.InfoText.Text);
+        Check("テキストあり", w.InfoText.Text.EndsWith("・テキストあり") && w.SampleText.Text == "完成まで3時間", w.InfoText.Text);
         w.SizeBox.Text = "10";
         Check("文字の大きさの範囲", w.InfoText.Text.StartsWith("文字の大きさ") && !w.StartButton.IsEnabled, w.InfoText.Text);
         w.SizeBox.Text = "８０"; // 全角でも読める
@@ -190,25 +190,35 @@ static class Program
         Check("作業用フォルダが残っていない", Directory.GetDirectories(Path.GetTempPath(), "timelapse_*").Length == 0);
     }
 
-    /// <summary>プレビュー（最初・真ん中・最後の3枚）。大きさ、文字、複数ファイルのときに正しい場所を描くかを確かめる。</summary>
+    /// <summary>プレビュー（最初・真ん中・最後の3枚）。大きさ、文字、帯、複数ファイルのときに正しい場所を描くかを確かめる。</summary>
     static async Task CheckPreviewAsync(string video, string video2, double total, string text, (string File, string Family, string Missing) font)
     {
-        Task<List<byte[]>> Render(List<string> inputs, double seconds, double intro, Ffmpeg.Caption? caption) =>
+        Task<List<Ffmpeg.PreviewFrame>> Render(List<string> inputs, double seconds, double intro, Ffmpeg.Caption? caption) =>
             Ffmpeg.RenderPreviewAsync(inputs, seconds, 5, intro, Ffmpeg.Layout.Crop, caption, CancellationToken.None);
         static (int W, int H) PngSize(byte[] png) =>
             (BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16)), BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20)));
+        static bool Same(Ffmpeg.PreviewFrame a, Ffmpeg.PreviewFrame b) => a.Png.AsSpan().SequenceEqual(b.Png);
 
         var sw = Stopwatch.StartNew();
         var plain = await Render([video], total, 1, null);
-        Check("プレビュー: 3枚・360×640", plain.Count == 3 && plain.All(p => PngSize(p) == (360, 640)),
-            string.Join(" / ", plain.Select(p => $"{PngSize(p).W}×{PngSize(p).H}")) + $"（{sw.Elapsed.TotalSeconds:0.00}秒）");
-        Check("プレビュー: 3枚とも違う画", plain.Select(p => Convert.ToBase64String(p)).Distinct().Count() == 3);
-        List<byte[]>? withText = null;
+        Check("プレビュー: 3枚・360×640", plain.Count == 3 && plain.All(f => PngSize(f.Png) == (360, 640)),
+            string.Join(" / ", plain.Select(f => $"{f.Seconds:0.###}秒 {PngSize(f.Png).W}×{PngSize(f.Png).H}"))
+            + $"（{sw.Elapsed.TotalSeconds:0.00}秒）");
+        Check("プレビュー: 最初・真ん中・最後の時刻", plain.Count == 3 && plain[0].Seconds == 0 && plain[1].Seconds == 2.5
+                                                && Math.Abs(plain[2].Seconds - (5 - 1.0 / 30)) < 1e-9);
+        Check("プレビュー: 3枚とも違う画", plain.Select(f => Convert.ToBase64String(f.Png)).Distinct().Count() == 3);
+        List<Ffmpeg.PreviewFrame>? withText = null;
         if (font.File != null)
         {
-            withText = await Render([video], total, 1,
-                new Ffmpeg.Caption(text, font.File, font.Family, 90, "FFFFFF", "000000", Ffmpeg.TextPosition.Top));
-            Check("プレビュー: 文字が入る", withText.Count == 3 && !withText[0].AsSpan().SequenceEqual(plain[0]));
+            var caption = new Ffmpeg.Caption(text, font.File, font.Family, 90, "FFFFFF", "000000", Ffmpeg.TextPosition.Top);
+            withText = await Render([video], total, 1, caption);
+            Check("プレビュー: 文字が入る", withText.Count == 3 && !Same(withText[0], plain[0]));
+            // 背景あり（帯）: 字幕の書き方が「帯」になり、画もフチ取りのときと変わる
+            var boxed = caption with { Box = true };
+            var withBox = await Render([video], total, 1, boxed);
+            Check("テキストの背景（帯）", Ffmpeg.BuildAss(boxed, 5).Contains(",100,100,0,0,3,")
+                                        && Ffmpeg.BuildAss(caption, 5).Contains(",100,100,0,0,1,")
+                                        && !Same(withBox[0], withText[0]) && !Same(withBox[0], plain[0]));
         }
 
         // 2本（各30秒）をつないで5秒・最後の1秒を冒頭へ → 12倍速。
@@ -220,56 +230,62 @@ static class Program
         double multiSeconds = sw.Elapsed.TotalSeconds;
         var only2 = await Render([video2], total2, 2, null);
         var only1 = await Render([video], total, 2, null);
-        Check("プレビュー（2本）: 最初は2本目の完成品", multi[0].AsSpan().SequenceEqual(only2[0]), $"{multiSeconds:0.00}秒");
-        Check("プレビュー（2本）: 真ん中は1本目", multi[1].AsSpan().SequenceEqual(only1[0]));
-        _previewPngs = withText ?? plain;
+        Check("プレビュー（2本）: 最初は2本目の完成品", Same(multi[0], only2[0]), $"{multiSeconds:0.00}秒");
+        Check("プレビュー（2本）: 真ん中は1本目", Same(multi[1], only1[0]));
+        _previewFrames = withText ?? plain;
     }
 
     /// <summary>
-    /// 画面を実際に表示して、配置（切れている所がないか）を確かめる。
-    /// プレビューの画面も開いて、画が入るか・2回目は同じ画面を使い回すか・閉じられるかを確かめる。
+    /// 画面を実際に表示して、プレビュー欄（画・切り替え・設定が変わったときの表示）と、
+    /// 標準・最小の大きさでの配置（切れている所がないか）を確かめる。
     /// </summary>
     static void CheckShownWindow()
     {
-        if (_window == null || _previewPngs == null)
+        if (_window == null || _previewFrames == null)
         {
-            Check("プレビューの画面", false, "前のテストが通っていないので確かめられない");
+            Check("プレビュー欄", false, "前のテストが通っていないので確かめられない");
             return;
         }
         var w = _window;
-        var show = typeof(MainWindow).GetMethod("ShowPreview", F)!;
-        Window? Current() => (Window?)typeof(MainWindow).GetField("_previewWindow", F)!.GetValue(w);
         try
         {
-            w.Show(); // 持ち主の画面が表示されていないと、プレビューの画面を開けない
+            w.Show();
             AllowLargeWindow(w);
-            CheckLayout(w, 1180, 680, "標準"); // MainWindow.xaml の Width / Height
-            CheckLayout(w, 960, 650, "最小");  // MainWindow.xaml の MinWidth / MinHeight
+            var setPreview = typeof(MainWindow).GetMethod("SetPreview", F)!;
+            Check("プレビュー欄: 最初は案内だけ", w.PreviewImage.Source == null && w.PreviewPlaceholder.IsVisible);
+            setPreview.Invoke(w, [_previewFrames, true]);
+            var first = w.PreviewImage.Source;
+            Check("プレビュー欄に画が出る",
+                first is BitmapSource { PixelWidth: 360, PixelHeight: 640 } && !w.PreviewPlaceholder.IsVisible
+                && w.PreviewCaption.Text == "最初（完成品）・0:00 の画", w.PreviewCaption.Text);
+            w.PreviewLastRadio.IsChecked = true;
+            Check("プレビュー欄: 最後に切り替えられる", !ReferenceEquals(first, w.PreviewImage.Source)
+                                                    && w.PreviewCaption.Text == "最後・0:05 の画", w.PreviewCaption.Text);
+            w.PreviewFirstRadio.IsChecked = true;
 
-            show.Invoke(w, [_previewPngs, true]);
-            var preview = Current();
-            if (preview != null)
-            {
-                preview.UpdateLayout();
-                var client = (FrameworkElement)VisualTreeHelper.GetChild(preview, 0);
-                Shot("preview", client, client.RenderSize);
-            }
-            var images = (Image[])typeof(MainWindow).GetField("_previewImages", F)!.GetValue(w)!;
-            var labels = (TextBlock[])typeof(MainWindow).GetField("_previewLabels", F)!.GetValue(w)!;
-            Check("プレビューの画面が開く",
-                preview is { IsVisible: true } && images.All(i => i.Source is BitmapSource { PixelWidth: 360, PixelHeight: 640 })
-                && labels[0].Text == "最初（完成品）",
-                string.Join(" / ", labels.Select(l => l.Text)));
-            show.Invoke(w, [_previewPngs, false]);
-            Check("2回目は同じ画面で画を差し替える", ReferenceEquals(preview, Current()) && w.OwnedWindows.Count == 1
-                                                    && labels[0].Text == "最初");
-            preview?.Close();
-            Check("プレビューの画面を閉じられる", Current() == null);
+            Check("プレビュー欄: 作ったあと設定を変えなければ最新", !w.PreviewStale.IsVisible);
+            string size = w.SizeBox.Text;
+            w.SizeBox.Text = "120";
+            bool staleAfterChange = w.PreviewStale.IsVisible;
+            w.BackBoxRadio.IsChecked = true;
+            w.BackNoneRadio.IsChecked = true;
+            w.SizeBox.Text = size;
+            Check("プレビュー欄: 設定を変えると古いと出て、戻すと消える", staleAfterChange && !w.PreviewStale.IsVisible);
+            w.VolumeSlider.Value = -3;
+            Check("プレビュー欄: BGM の音量では古くならない", !w.PreviewStale.IsVisible);
+            w.VolumeSlider.Value = -6;
+
+            CheckLayout(w, 1480, 720, "標準"); // MainWindow.xaml の Width / Height
+            CheckLayout(w, 1240, 650, "最小"); // MainWindow.xaml の MinWidth / MinHeight
+
+            typeof(MainWindow).GetMethod("ClearButton_Click", F)!.Invoke(w, [w.ClearButton, new RoutedEventArgs()]);
+            Check("動画をクリアするとプレビューも消える", w.PreviewImage.Source == null && w.PreviewPlaceholder.IsVisible
+                                                    && !w.PreviewStale.IsVisible);
             w.Close();
         }
         catch (Exception ex)
         {
-            Check("プレビューの画面", false, ex.ToString());
+            Check("プレビュー欄", false, ex.ToString());
         }
     }
 

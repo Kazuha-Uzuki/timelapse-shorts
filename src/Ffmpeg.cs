@@ -130,9 +130,13 @@ public static class Ffmpeg
     /// <summary>
     /// 動画に重ねる文字。色は "RRGGBB"。
     /// FontFamily はフォントの中に書かれた Windows 用のファミリー名（libass はこの名前でフォントを探す）。
+    /// Box が true なら、フチ取りの代わりに OutlineColor の帯（背景）の上に文字を描く。
     /// </summary>
     public record Caption(string Text, string FontFile, string FontFamily, int Size,
-        string TextColor, string OutlineColor, TextPosition Position);
+        string TextColor, string OutlineColor, TextPosition Position, bool Box = false);
+
+    /// <summary>プレビューの1枚。Seconds は出来上がりの何秒目か。</summary>
+    public record PreviewFrame(double Seconds, byte[] Png);
 
     /// <summary>
     /// 入力（複数なら名前順に連結）を targetSeconds 秒の縦長タイムラプスにする（元が短ければ等速のまま）。
@@ -297,7 +301,7 @@ public static class Ffmpeg
     /// 仕上がりの「最初・真ん中・最後」の画を、変換と同じ処理で描いて PNG（360×640）で返す。
     /// 元の動画はその3か所しか読まないので、PC の性能にほとんど左右されない。
     /// </summary>
-    public static async Task<List<byte[]>> RenderPreviewAsync(IReadOnlyList<string> inputs, double totalSeconds,
+    public static async Task<List<PreviewFrame>> RenderPreviewAsync(IReadOnlyList<string> inputs, double totalSeconds,
         double targetSeconds, double introSeconds, Layout layout, Caption? caption, CancellationToken ct)
     {
         string work = Path.Combine(Path.GetTempPath(), $"timelapse_{Guid.NewGuid():N}");
@@ -311,14 +315,14 @@ public static class Ffmpeg
             string filter = await FinishVideoAsync(work, "[0:v]null", await GetHdrTransferAsync(inputs[0]), layout,
                 caption, seconds, ct) + ",scale=360:640[v]";
 
-            var pngs = new List<byte[]>();
+            var frames = new List<PreviewFrame>();
             foreach (double t in new[] { 0, seconds / 2, seconds - 1.0 / OutputFps })
             {
                 // 出来上がりの t 秒目が、元の動画の何秒目か（完成品を冒頭に移している場合も考える）
                 double src = introSeconds > 0 && t < introSeconds ? cut + t * factor
                     : (t - Math.Max(0, introSeconds)) * factor;
                 var (k, local) = Locate(durations, Math.Clamp(src, 0, Math.Max(0, totalSeconds - 0.1)));
-                string png = Path.Combine(work, $"preview{pngs.Count}.png");
+                string png = Path.Combine(work, $"preview{frames.Count}.png");
                 string stderr = "";
                 // その時刻を含むファイルだけを開いて1コマ描く。動画の終わりぎわは映像が音より少し短くて
                 // 画が無いことがあるので、そのときは2秒前を描く
@@ -331,9 +335,9 @@ public static class Ffmpeg
                 }
                 if (!File.Exists(png))
                     throw new InvalidOperationException("プレビューを作れませんでした。\n" + stderr.Trim());
-                pngs.Add(await File.ReadAllBytesAsync(png, ct));
+                frames.Add(new PreviewFrame(t, await File.ReadAllBytesAsync(png, ct)));
             }
-            return pngs;
+            return frames;
         }
         finally
         {
@@ -352,7 +356,10 @@ public static class Ffmpeg
             TextPosition.Middle => (5, 0),
             _ => (2, 600),
         };
-        int outline = Math.Max(2, c.Size / 12), shadow = Math.Max(1, c.Size / 40);
+        // 背景なし: フチ取り＋影。背景あり: OutlineColor の帯（ASS の BorderStyle 3。このとき Outline は帯の余白）
+        (int border, int outline, int shadow) = c.Box
+            ? (3, Math.Max(6, c.Size / 5), 0)
+            : (1, Math.Max(2, c.Size / 12), Math.Max(1, c.Size / 40));
         // { } \ は ASS では特別な意味があるので全角に置き換え、改行は \N にする
         string text = c.Text.Trim().Replace("\\", "＼").Replace("{", "｛").Replace("}", "｝")
             .Replace("\r\n", "\n").Replace('\r', '\n').Replace("\n", "\\N");
@@ -367,7 +374,7 @@ public static class Ffmpeg
 
             [V4+ Styles]
             Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-            Style: Caption,{c.FontFamily.Replace(",", "")},{c.Size},{Bgr(c.TextColor)},&H000000FF,{Bgr(c.OutlineColor)},&H80000000,0,0,0,0,100,100,0,0,1,{outline},{shadow},{align},60,60,{marginV},1
+            Style: Caption,{c.FontFamily.Replace(",", "")},{c.Size},{Bgr(c.TextColor)},&H000000FF,{Bgr(c.OutlineColor)},&H80000000,0,0,0,0,100,100,0,0,{border},{outline},{shadow},{align},60,60,{marginV},1
 
             [Events]
             Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
