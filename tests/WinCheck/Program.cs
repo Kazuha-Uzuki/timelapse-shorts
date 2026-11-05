@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using TimelapseShorts;
 
 // Windows 上で、同梱の ffmpeg とフォントを使って実際に変換し、結果を確かめる（GitHub Actions 用）。
@@ -15,11 +16,62 @@ static class Program
     }
 
     [STAThread]
-    static int Main() => RunAsync().GetAwaiter().GetResult();
+    static int Main()
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        CheckWindow(); // 画面は STA のこのスレッドで作る必要があるので、先に同期で確かめる
+        // 変換のテストは別のスレッドで（画面を作ったスレッドで待つと止まることがあるため）
+        return Task.Run(() => RunAsync()).GetAwaiter().GetResult() | (_failures == 0 ? 0 : 1);
+    }
+
+    /// <summary>画面を実際に作り（表示はしない）、初期状態と入力チェックを確かめる。</summary>
+    static void CheckWindow()
+    {
+        MainWindow w;
+        try { w = new MainWindow(); }
+        catch (Exception ex) { Check("画面を作れる", false, ex.ToString()); return; }
+        Check("画面を作れる", true);
+
+        const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance;
+        T Get<T>(string field) => (T)typeof(MainWindow).GetField(field, F)!.GetValue(w)!;
+        void Set(string field, object? value) => typeof(MainWindow).GetField(field, F)!.SetValue(w, value);
+        void Refresh() => typeof(MainWindow).GetMethod("RefreshInfo", F)!.Invoke(w, null);
+
+        Check("フォント一覧（★が先頭）", w.FontBox.Items.Count > 9 && w.FontBox.Items[0]!.ToString()!.StartsWith('★'),
+            $"{w.FontBox.Items.Count} 個 / 先頭 {w.FontBox.Items[0]}");
+        Check("色と位置の選択肢", w.ColorBox.Items.Count == 4 && w.PositionBox.Items.Count == 3);
+        Check("総尺の初期値", w.LengthBox.Text == "2:59", w.LengthBox.Text);
+
+        // 1時間の動画を入れた状態にする
+        Get<List<string>>("_files").Add("dummy.mp4");
+        Set("_totalSeconds", 3600.0);
+        Set("_encoder", "h264_mf");
+        Refresh();
+        Check("基本の表示", w.InfoText.Text == "合計 1:00:00 → 2:59（20.1倍速）" && w.StartButton.IsEnabled, w.InfoText.Text);
+
+        w.TextCheck.IsChecked = true;
+        Check("テキストが空なら作れない", w.InfoText.Text == "入れるテキストを入力してください" && !w.StartButton.IsEnabled, w.InfoText.Text);
+        w.CaptionBox.Text = "完成まで3時間";
+        Check("テキストあり", w.InfoText.Text.EndsWith("・テキストあり") && w.PreviewText.Text == "完成まで3時間", w.InfoText.Text);
+        w.SizeBox.Text = "10";
+        Check("文字の大きさの範囲", w.InfoText.Text.StartsWith("文字の大きさ") && !w.StartButton.IsEnabled, w.InfoText.Text);
+        w.SizeBox.Text = "８０"; // 全角でも読める
+        Check("全角の数字", w.StartButton.IsEnabled, w.InfoText.Text);
+
+        Set("_bgmFile", @"C:\dummy\曲.mp3");
+        Set("_bgmSeconds", 120.0);
+        Refresh();
+        Check("BGMあり", w.InfoText.Text.Contains("・BGMあり") && w.FadeInBox.IsEnabled, w.InfoText.Text);
+        w.FadeInBox.Text = "100";
+        w.FadeOutBox.Text = "100";
+        Check("フェードが長すぎると作れない", w.InfoText.Text.StartsWith("フェードの秒数") && !w.StartButton.IsEnabled, w.InfoText.Text);
+        w.FadeInBox.Text = "1.5";
+        w.FadeOutBox.Text = "３";
+        Check("小数・全角のフェード", w.StartButton.IsEnabled, w.InfoText.Text);
+    }
 
     static async Task<int> RunAsync()
     {
-        Console.OutputEncoding = System.Text.Encoding.UTF8;
         string work = Path.Combine(Path.GetTempPath(), "wincheck");
         if (Directory.Exists(work)) Directory.Delete(work, true);
         Directory.CreateDirectory(work);

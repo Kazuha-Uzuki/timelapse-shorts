@@ -13,6 +13,9 @@
   <ItemGroup>
     <Compile Include="../../src/Ffmpeg.cs" />
     <Compile Include="../../src/FontCatalog.cs" />
+    <!-- 画面も実際に作って、起動時に落ちないことと入力チェックを確かめる -->
+    <Page Include="../../src/MainWindow.xaml" Link="MainWindow.xaml" />
+    <Compile Include="../../src/MainWindow.xaml.cs" Link="MainWindow.xaml.cs" />
   </ItemGroup>
 
 </Project>
