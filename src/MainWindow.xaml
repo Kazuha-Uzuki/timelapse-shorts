@@ -85,7 +85,57 @@
                                  VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
                         <TextBlock Text="秒" VerticalAlignment="Center"/>
                     </StackPanel>
-                    <TextBlock Margin="0,14,0,0" Foreground="#666" TextWrapping="Wrap"
+
+                    <!-- 音量（dB）と、調整後の平均・最大音量のバー（-60〜0 dB。0 dB を超えると音割れ） -->
+                    <Grid Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="40"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="72"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="音量" VerticalAlignment="Center"/>
+                        <Slider Grid.Column="1" x:Name="VolumeSlider" Minimum="-20" Maximum="10" Value="0"
+                                TickFrequency="1" IsSnapToTickEnabled="True" Margin="8,0" VerticalAlignment="Center"
+                                ValueChanged="VolumeSlider_ValueChanged"/>
+                        <TextBlock Grid.Column="2" x:Name="VolumeText" Text="±0 dB" TextAlignment="Right"
+                                   VerticalAlignment="Center" FontWeight="SemiBold"/>
+
+                        <TextBlock Grid.Row="1" Text="平均" FontSize="12" Margin="0,8,0,0" VerticalAlignment="Center"/>
+                        <ProgressBar Grid.Row="1" Grid.Column="1" x:Name="MeanBar" Minimum="-60" Maximum="0" Value="-60"
+                                     Height="12" Margin="8,8,8,0" Foreground="#3a9d5d"/>
+                        <TextBlock Grid.Row="1" Grid.Column="2" x:Name="MeanText" FontSize="12" Margin="0,8,0,0"
+                                   TextAlignment="Right" VerticalAlignment="Center"/>
+
+                        <TextBlock Grid.Row="2" Text="最大" FontSize="12" Margin="0,4,0,0" VerticalAlignment="Center"/>
+                        <ProgressBar Grid.Row="2" Grid.Column="1" x:Name="PeakBar" Minimum="-60" Maximum="0" Value="-60"
+                                     Height="12" Margin="8,4,8,0" Foreground="#3a9d5d"/>
+                        <TextBlock Grid.Row="2" Grid.Column="2" x:Name="PeakText" FontSize="12" Margin="0,4,0,0"
+                                   TextAlignment="Right" VerticalAlignment="Center"/>
+
+                        <!-- 目盛り（-60, -40, -20, -10, 0 dB の位置に合わせた幅） -->
+                        <Grid Grid.Row="3" Grid.Column="1" Margin="8,1,8,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*"/>
+                                <ColumnDefinition Width="2*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="-60" FontSize="10" Foreground="#888"/>
+                            <TextBlock Grid.Column="1" Text="-40" FontSize="10" Foreground="#888"/>
+                            <TextBlock Grid.Column="2" Text="-20" FontSize="10" Foreground="#888"/>
+                            <TextBlock Grid.Column="3" Text="-10" FontSize="10" Foreground="#888"/>
+                            <TextBlock Grid.Column="3" Text="0 dB" FontSize="10" Foreground="#888" HorizontalAlignment="Right"/>
+                        </Grid>
+                    </Grid>
+                    <TextBlock x:Name="LevelNote" Margin="0,4,0,0" FontSize="12" Foreground="#666" TextWrapping="Wrap"/>
+
+                    <TextBlock Margin="0,10,0,0" Foreground="#666" TextWrapping="Wrap"
                                Text="曲が動画より短いときは繰り返し、長いときは動画の長さで切ります。元の動画の音は入りません。0秒にするとフェードなしです。"/>
                 </StackPanel>
             </TabItem>

@@ -68,6 +68,18 @@ static class Program
         w.FadeInBox.Text = "1.5";
         w.FadeOutBox.Text = "３";
         Check("小数・全角のフェード", w.StartButton.IsEnabled, w.InfoText.Text);
+
+        // 音量バー: 曲の平均 -20 dB・最大 -3 dB として、音量を変える
+        Set("_bgmMean", -20.0);
+        Set("_bgmPeak", -3.0);
+        w.VolumeSlider.Value = 6;
+        Check("音量バー（+6 dB で 0 dB 超え）",
+            w.VolumeText.Text == "+6 dB" && w.MeanBar.Value == -14 && w.PeakBar.Value == 0 && w.PeakText.Text == "+3.0 dB"
+            && w.LevelNote.Text.Contains("自動で少し抑えます") && w.InfoText.Text.Contains("BGMあり（+6 dB）"),
+            $"{w.VolumeText.Text} / 平均 {w.MeanText.Text} / 最大 {w.PeakText.Text} / {w.LevelNote.Text} / {w.InfoText.Text}");
+        w.VolumeSlider.Value = -6;
+        Check("音量バー（-6 dB）", w.PeakBar.Value == -9 && w.PeakText.Text == "-9.0 dB" && !w.LevelNote.Text.Contains("超えています"),
+            $"{w.VolumeText.Text} / 最大 {w.PeakText.Text} / {w.LevelNote.Text}");
     }
 
     static async Task<int> RunAsync()
@@ -138,6 +150,15 @@ static class Program
             "-of", "csv=p=0", full)).Trim();
         Check("BGM の長さが動画と同じ（5秒）", double.TryParse(audioLength, System.Globalization.CultureInfo.InvariantCulture, out var a)
                                             && Math.Abs(a - 5) < 0.05, audioLength);
+        // 音量: 測定と、下げる・大きく上げる（音割れしないこと）
+        var (songMean, songPeak) = await Ffmpeg.GetVolumeAsync(song);
+        Check("曲の音量を測れる", !double.IsNaN(songMean) && !double.IsNaN(songPeak), $"平均 {songMean} / 最大 {songPeak} dB");
+        var plainBgm = bgm with { FadeIn = 0, FadeOut = 0 };
+        var (_, quieterPeak) = await Ffmpeg.GetVolumeAsync(await ConvertAsync(video, total, encoder, "minus6", plainBgm with { GainDb = -6 }, null));
+        Check("音量 -6 dB", Math.Abs(quieterPeak - (songPeak - 6)) < 1, $"最大 {songPeak} → {quieterPeak} dB");
+        var (_, louderPeak) = await Ffmpeg.GetVolumeAsync(await ConvertAsync(video, total, encoder, "plus24", plainBgm with { GainDb = 24 }, null));
+        Check("音量 +24 dB でも音割れしない", louderPeak <= 0, $"最大 {songPeak} + 24 → {louderPeak} dB");
+
         Check("作業用フォルダが残っていない", Directory.GetDirectories(Path.GetTempPath(), "timelapse_*").Length == 0);
 
         Console.WriteLine(_failures == 0 ? "すべて OK" : $"NG が {_failures} 件");

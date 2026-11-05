@@ -55,6 +55,8 @@ public partial class MainWindow : Window
     double _totalSeconds;
     string? _bgmFile;
     double _bgmSeconds;
+    double _bgmMean = double.NaN, _bgmPeak = double.NaN; // 曲の平均・最大音量（dB）。測っていなければ NaN
+    string? _measuringFile; // 音量を測っている最中の曲
     Platform _platform = Platforms[0];
     string? _encoder;
     string? _lastOutputDir;
@@ -165,6 +167,7 @@ public partial class MainWindow : Window
     void BgmClearButton_Click(object sender, RoutedEventArgs e)
     {
         _bgmFile = null;
+        _bgmMean = _bgmPeak = double.NaN;
         ShowBgm();
         RefreshInfo();
     }
@@ -175,19 +178,72 @@ public partial class MainWindow : Window
         try
         {
             _bgmSeconds = await Ffmpeg.GetAudioDurationAsync(file);
-            _bgmFile = file;
+            _bgmFile = _measuringFile = file;
+            _bgmMean = _bgmPeak = double.NaN;
+            ShowBgm();
+            var (mean, peak) = await Ffmpeg.GetVolumeAsync(file);
+            if (_bgmFile == file) (_bgmMean, _bgmPeak) = (mean, peak); // 調べている間に曲が変わっていなければ反映
         }
         catch (Exception ex)
         {
             StatusText.Text = ex.Message;
         }
+        if (_measuringFile == file) _measuringFile = null;
         ShowBgm();
         RefreshInfo();
     }
 
-    void ShowBgm() => BgmText.Text = _bgmFile == null
-        ? "（なし）音楽ファイルをこの画面にドラッグ＆ドロップするか、「曲を選ぶ」から選んでください"
-        : $"♪ {System.IO.Path.GetFileName(_bgmFile)}（{Fmt(_bgmSeconds)}）";
+    void ShowBgm()
+    {
+        BgmText.Text = _bgmFile == null
+            ? "（なし）音楽ファイルをこの画面にドラッグ＆ドロップするか、「曲を選ぶ」から選んでください"
+            : $"♪ {System.IO.Path.GetFileName(_bgmFile)}（{Fmt(_bgmSeconds)}）";
+        ShowLevels();
+    }
+
+    void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!_ready) return;
+        ShowLevels();
+        RefreshInfo();
+    }
+
+    static readonly Brush LevelOk = Frozen(0x3a, 0x9d, 0x5d), LevelOver = Frozen(0xd9, 0x3b, 0x3b);
+
+    static Brush Frozen(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+
+    static string Db(double db) => db > 0 ? $"+{db:0.0} dB" : $"{db:0.0} dB";
+
+    /// <summary>音量の数字と、調整後の平均・最大音量のバーを表示する。</summary>
+    void ShowLevels()
+    {
+        double gain = VolumeSlider.Value;
+        VolumeText.Text = gain == 0 ? "±0 dB" : $"{gain:+0;-0} dB";
+        if (double.IsNaN(_bgmMean) || double.IsNaN(_bgmPeak))
+        {
+            MeanBar.Value = PeakBar.Value = MeanBar.Minimum;
+            MeanText.Text = PeakText.Text = "—";
+            LevelNote.Text = _bgmFile == null ? ""
+                : _measuringFile == _bgmFile ? "曲の音量を調べています…"
+                : "曲の音量を測れませんでした（音量の調整はできます）";
+            return;
+        }
+        double mean = _bgmMean + gain, peak = _bgmPeak + gain;
+        MeanBar.Value = Math.Clamp(mean, MeanBar.Minimum, MeanBar.Maximum);
+        PeakBar.Value = Math.Clamp(peak, PeakBar.Minimum, PeakBar.Maximum);
+        MeanText.Text = Db(mean);
+        PeakText.Text = Db(peak);
+        bool over = peak > 0;
+        PeakBar.Foreground = PeakText.Foreground = over ? LevelOver : LevelOk;
+        LevelNote.Text = over
+            ? "最大が 0 dB を超えています。音割れしないよう、大きい部分は自動で少し抑えます。"
+            : "最大が 0 dB を超えると音割れします（超えた分は自動で抑えます）。";
+    }
 
     async void AddButton_Click(object sender, RoutedEventArgs e)
     {
@@ -305,7 +361,8 @@ public partial class MainWindow : Window
             double factor = Math.Max(1, _totalSeconds / s.Target);
             InfoText.Text = $"合計 {Fmt(_totalSeconds)} → {Fmt(_totalSeconds / factor)}" +
                             (factor > 1 ? $"（{factor:0.#}倍速）" : "（元が短いので等速のまま縦長にします）") +
-                            (_bgmFile != null ? "・BGMあり" : "") + (TextCheck.IsChecked == true ? "・テキストあり" : "");
+                            (_bgmFile == null ? "" : VolumeSlider.Value == 0 ? "・BGMあり" : $"・BGMあり（{VolumeText.Text}）") +
+                            (TextCheck.IsChecked == true ? "・テキストあり" : "");
         }
         UpdateState();
     }
@@ -353,7 +410,7 @@ public partial class MainWindow : Window
             MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
-        Ffmpeg.Bgm? bgm = _bgmFile == null ? null : new Ffmpeg.Bgm(_bgmFile, _bgmSeconds, s.FadeIn, s.FadeOut);
+        Ffmpeg.Bgm? bgm = _bgmFile == null ? null : new Ffmpeg.Bgm(_bgmFile, _bgmSeconds, s.FadeIn, s.FadeOut, VolumeSlider.Value);
         _cts = new CancellationTokenSource();
         SetBusy(true, cancellable: true);
         OpenFolderButton.Visibility = Visibility.Collapsed;
@@ -423,7 +480,7 @@ public partial class MainWindow : Window
         SettingsTabs.IsEnabled = idle; // 変換中は設定を変えられないようにする
         IntroBox.IsEnabled = IntroCheck.IsChecked == true;
         BgmSelectButton.IsEnabled = Ffmpeg.IsAvailable;
-        BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = _bgmFile != null;
+        BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = VolumeSlider.IsEnabled = _bgmFile != null;
         CaptionBox.IsEnabled = FontBox.IsEnabled = SizeBox.IsEnabled = ColorBox.IsEnabled = PositionBox.IsEnabled
             = TextCheck.IsChecked == true;
         StartButton.IsEnabled = idle && _encoder != null && _files.Count > 0 && _totalSeconds > 0

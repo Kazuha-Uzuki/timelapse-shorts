@@ -80,6 +80,19 @@ public static class Ffmpeg
         return d;
     }
 
+    /// <summary>BGM 用。曲全体の平均音量と最大音量（dB。0 dB が音割れの境目）を測る。測れなければ NaN。</summary>
+    public static async Task<(double Mean, double Peak)> GetVolumeAsync(string file)
+    {
+        var (_, _, stderr) = await RunAsync(FfmpegPath,
+            ["-hide_banner", "-nostats", "-i", file, "-map", "0:a:0", "-af", "volumedetect", "-f", "null", "-"]);
+        double Find(string key)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(stderr, key + @":\s*(-?[\d.]+) dB");
+            return m.Success ? double.Parse(m.Groups[1].Value, Inv) : double.NaN;
+        }
+        return (Find("mean_volume"), Find("max_volume"));
+    }
+
     /// <summary>先頭60秒だけ見て、キーフレームの平均間隔（秒）を返す。測れなければ +∞。</summary>
     static async Task<double> GetKeyframeIntervalAsync(string file)
     {
@@ -109,8 +122,8 @@ public static class Ffmpeg
 
     public record Progress(string Stage, double Fraction, TimeSpan? Remaining);
 
-    /// <summary>BGM。Seconds は曲の長さ（動画より短いときに繰り返す回数の計算に使う）。</summary>
-    public record Bgm(string File, double Seconds, double FadeIn, double FadeOut);
+    /// <summary>BGM。Seconds は曲の長さ（動画より短いときに繰り返す回数の計算に使う）。GainDb は音量の上げ下げ（dB）。</summary>
+    public record Bgm(string File, double Seconds, double FadeIn, double FadeOut, double GainDb = 0);
 
     public enum TextPosition { Top, Middle, Bottom }
 
@@ -221,6 +234,9 @@ public static class Ffmpeg
             args.AddRange(["-stream_loop", loops.ToString(Inv), "-i", bgm.File]);
             int index = introSeconds > 0 ? 2 : 1;
             filter += $";[{index}:a]atrim=duration={Sec(seconds)},asetpts=PTS-STARTPTS";
+            if (bgm.GainDb != 0) filter += $",volume={Sec(bgm.GainDb)}dB";
+            // 上げたときに 0 dB を超える部分は、音割れしないよう少し手前（-0.3 dB）で抑える
+            if (bgm.GainDb > 0) filter += ",alimiter=limit=0.966:level=false";
             if (bgm.FadeIn > 0) filter += $",afade=t=in:st=0:d={Sec(bgm.FadeIn)}";
             if (bgm.FadeOut > 0) filter += $",afade=t=out:st={Sec(seconds - bgm.FadeOut)}:d={Sec(bgm.FadeOut)}";
             filter += "[a]";
