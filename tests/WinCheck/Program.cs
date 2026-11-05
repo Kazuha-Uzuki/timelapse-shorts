@@ -432,6 +432,10 @@ static class Program
             Check("動画のプレビュー欄", false, "前のテストが通っていないので確かめられない");
             return;
         }
+        // 写すときは標準の大きさにしておく（GitHub の PC は画面が 1024×768 なので、最初は窓がふだんより狭い）
+        w.Width = 1480;
+        w.Height = 720;
+        w.UpdateLayout();
         // 作ったものはクリアや次の作成で消されるので、写しを渡す
         string clip = Path.Combine(Path.GetTempPath(), $"timelapse-preview-wincheck-{Environment.ProcessId}.mp4");
         File.Copy(_clipPath, clip, true);
