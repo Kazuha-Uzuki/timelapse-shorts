@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 
 namespace TimelapseShorts;
@@ -62,6 +63,9 @@ public partial class MainWindow : Window
     string? _lastOutputDir;
     CancellationTokenSource? _cts;
     bool _busy, _ready;
+    Window? _previewWindow; // プレビューの画面（開いていなければ null）
+    readonly Image[] _previewImages = new Image[3];
+    readonly TextBlock[] _previewLabels = new TextBlock[3];
 
     // 変換中にPCがスリープして処理が止まるのを防ぐ（画面が消えるのは構わない）
     [DllImport("kernel32.dll")]
@@ -380,15 +384,15 @@ public partial class MainWindow : Window
         PreviewBorder.Opacity = TextCheck.IsChecked == true ? 1 : 0.4;
     }
 
-    /// <summary>テキストの設定から、変換に渡す内容を作る。やめる場合は false。</summary>
-    bool TryMakeCaption(Settings s, out Ffmpeg.Caption? caption)
+    /// <summary>テキストの設定から、変換に渡す内容を作る。やめる場合は false。action は確認の文に使う（「作成」など）。</summary>
+    bool TryMakeCaption(Settings s, string action, out Ffmpeg.Caption? caption)
     {
         caption = null;
         if (TextCheck.IsChecked != true || FontBox.SelectedItem is not FontCatalog.Item font) return true;
         string text = CaptionBox.Text.Trim();
         var (file, family, missing) = FontCatalog.Resolve(font, text);
         if (missing != "" && MessageBox.Show(this,
-                $"フォント「{font.Display}」には次の文字がありません。四角や空白で表示されます。\n\n{missing}\n\nこのまま作成しますか？",
+                $"フォント「{font.Display}」には次の文字がありません。四角や空白で表示されます。\n\n{missing}\n\nこのまま{action}しますか？",
                 "フォントの確認", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return false;
         var color = ColorPresets[Math.Max(0, ColorBox.SelectedIndex)];
@@ -403,7 +407,7 @@ public partial class MainWindow : Window
         Ffmpeg.Caption? caption;
         try
         {
-            if (!TryMakeCaption(s, out caption)) return;
+            if (!TryMakeCaption(s, "作成", out caption)) return;
         }
         catch (Exception ex)
         {
@@ -451,6 +455,105 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>出来上がりの「最初・真ん中・最後」の画を作って、別の小さな画面に並べる。</summary>
+    async void PreviewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_files.Count == 0 || Validate(out var s) != null) return;
+        Ffmpeg.Caption? caption;
+        try
+        {
+            if (!TryMakeCaption(s, "プレビュー", out caption)) return;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        var layout = BlurRadio.IsChecked == true ? Ffmpeg.Layout.Blur : Ffmpeg.Layout.Crop;
+        string status = StatusText.Text;
+        StatusText.Text = "プレビューを作成中…";
+        SetBusy(true);
+        try
+        {
+            var pngs = await Ffmpeg.RenderPreviewAsync(_files, _totalSeconds, s.Target, s.Intro, layout, caption,
+                CancellationToken.None);
+            StatusText.Text = status;
+            ShowPreview(pngs, s.Intro > 0);
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = status;
+            MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>プレビューの画面を開く（開いていれば画を差し替える）。</summary>
+    void ShowPreview(IReadOnlyList<byte[]> pngs, bool introMoved)
+    {
+        if (_previewWindow == null)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+            for (int i = 0; i < 3; i++)
+            {
+                _previewLabels[i] = new TextBlock { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 4) };
+                _previewImages[i] = new Image { Width = 216, Height = 384, Stretch = Stretch.Uniform };
+                var cell = new StackPanel { Margin = new Thickness(6) };
+                cell.Children.Add(_previewLabels[i]);
+                cell.Children.Add(new Border { Background = Brushes.Black, Child = _previewImages[i] });
+                row.Children.Add(cell);
+            }
+            var root = new StackPanel { Margin = new Thickness(10) };
+            root.Children.Add(row);
+            root.Children.Add(new TextBlock
+            {
+                Margin = new Thickness(6, 8, 6, 0),
+                MaxWidth = 680,
+                FontSize = 12,
+                Foreground = Brushes.DimGray,
+                TextWrapping = TextWrapping.Wrap,
+                Text = "仕上がりと同じ処理で描いた画を、縮小して表示しています（音は入りません）。" +
+                       "設定を変えたら、もう一度「プレビュー」を押してください。",
+            });
+            _previewWindow = new Window
+            {
+                Title = "プレビュー",
+                Owner = this,
+                Content = root,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ShowInTaskbar = false,
+                FontFamily = FontFamily,
+                FontSize = 14,
+            };
+            _previewWindow.Closed += (_, _) => _previewWindow = null;
+            _previewWindow.Show();
+        }
+        string[] names = introMoved ? ["最初（完成品）", "真ん中", "最後"] : ["最初", "真ん中", "最後"];
+        for (int i = 0; i < 3; i++)
+        {
+            _previewLabels[i].Text = names[i];
+            _previewImages[i].Source = LoadPng(pngs[i]);
+        }
+        _previewWindow.Activate();
+    }
+
+    static BitmapImage LoadPng(byte[] png)
+    {
+        using var stream = new MemoryStream(png);
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad; // 読み込みを済ませてから stream を閉じる
+        image.StreamSource = stream;
+        image.EndInit();
+        image.Freeze();
+        return image;
+    }
+
     void CancelButton_Click(object sender, RoutedEventArgs e) => _cts?.Cancel();
 
     void OpenFolderButton_Click(object sender, RoutedEventArgs e)
@@ -483,8 +586,9 @@ public partial class MainWindow : Window
         BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = VolumeSlider.IsEnabled = _bgmFile != null;
         CaptionBox.IsEnabled = FontBox.IsEnabled = SizeBox.IsEnabled = ColorBox.IsEnabled = PositionBox.IsEnabled
             = TextCheck.IsChecked == true;
-        StartButton.IsEnabled = idle && _encoder != null && _files.Count > 0 && _totalSeconds > 0
-                                && Validate(out _) == null;
+        bool valid = _files.Count > 0 && _totalSeconds > 0 && Validate(out _) == null;
+        PreviewButton.IsEnabled = idle && valid; // プレビューは画像を作るだけなので、エンコーダーは要らない
+        StartButton.IsEnabled = idle && _encoder != null && valid;
     }
 
     static string Fmt(double seconds)

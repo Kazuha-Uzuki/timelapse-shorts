@@ -176,15 +176,8 @@ public static class Ffmpeg
         bool keyframesOnly = await GetKeyframeIntervalAsync(first) <= factor / OutputFps;
         string? hdr = await GetHdrTransferAsync(first);
 
-        string[] source = ["-i", first];
-        if (inputs.Count > 1)
-        {
-            var sb = new StringBuilder();
-            foreach (var f in inputs)
-                sb.Append("file '").Append(f.Replace('\\', '/').Replace("'", @"'\''")).Append("'\n");
-            await File.WriteAllTextAsync(Path.Combine(work, "list.txt"), sb.ToString(), new UTF8Encoding(false), ct);
-            source = ["-f", "concat", "-safe", "0", "-i", "list.txt"];
-        }
+        var durations = await DurationsAsync(inputs);
+        string[] source = await SourceArgsAsync(work, "list.txt", inputs, durations, ct);
         string[] skip = keyframesOnly ? ["-skip_frame", "nokey"] : [];
         // 時刻を factor 分の1に縮めてから 30fps で拾う（細かい時間単位で縮めるのでずれず、最後のコマも捨てない）
         string pick = $"settb=AVTB,setpts=(PTS-STARTPTS)/{factor.ToString("0.######", Inv)},fps={OutputFps}:eof_action=pass";
@@ -193,8 +186,12 @@ public static class Ffmpeg
         string chain;
         if (introSeconds > 0)
         {
-            // 最後（完成品）とそれ以外を別々に読み、完成品を先にしてつなぐ。元動画はどこも1回しか読まない
-            args.AddRange([.. skip, "-ss", Sec(cut), .. source]);
+            // 最後（完成品）とそれ以外を別々に読み、完成品を先にしてつなぐ。元動画はどこも1回しか読まない。
+            // 完成品は、それが始まるファイルから読む（つないだリストの途中へ飛ぶと、音の入っていない動画では
+            // ffmpeg の時刻の丸めのせいで飛べず、先頭から読み直して遅くなることがあるため）
+            var (k, local) = Locate(durations, cut);
+            string[] tail = await SourceArgsAsync(work, "tail.txt", inputs.Skip(k).ToList(), durations.Skip(k).ToList(), ct);
+            args.AddRange([.. skip, "-ss", Sec(local), .. tail]);
             args.AddRange([.. skip, "-t", Sec(cut), .. source]);
             int introFrames = (int)Math.Round(introSeconds * OutputFps);
             chain = $"[0:v]{pick},trim=end_frame={introFrames}[end];[1:v]{pick}[main];[end][main]concat=n=2:v=1:a=0";
@@ -204,27 +201,7 @@ public static class Ffmpeg
             args.AddRange([.. skip, .. source]);
             chain = $"[0:v]{pick}";
         }
-        // iPhone などの HDR 動画はそのままだと色が白っぽくなるので、普通の色（SDR）に直す
-        if (hdr != null)
-            chain += $",zscale=tin={hdr}:pin=bt2020:min=bt2020nc:t=bt709:p=bt709:m=bt709:npl=203:r=tv,format=yuv420p";
-
-        string filter = layout == Layout.Crop
-            ? $"{chain},crop='min(iw,ih*9/16)':'min(ih,iw*16/9)',scale=1080:1920,setsar=1"
-            : $"{chain},split[a][b];" +
-              // 背景は1/4解像度でぼかしてから拡大する（見た目はほぼ同じで、等倍でぼかすより約4倍速い）
-              "[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=5:2,scale=1080:1920[bg];" +
-              "[b]scale=1080:1920:force_original_aspect_ratio=decrease[fg];" +
-              "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1";
-
-        // 文字は字幕ファイル（ASS）にして libass で描く。フォントは作業用フォルダにコピーして読ませる
-        if (caption != null)
-        {
-            Directory.CreateDirectory(Path.Combine(work, "fonts"));
-            File.Copy(caption.FontFile, Path.Combine(work, "fonts", Path.GetFileName(caption.FontFile)));
-            await File.WriteAllTextAsync(Path.Combine(work, "caption.ass"), BuildAss(caption, seconds), new UTF8Encoding(false), ct);
-            filter += ",ass=caption.ass:fontsdir=fonts";
-        }
-        filter += "[v]";
+        string filter = await FinishVideoAsync(work, chain, hdr, layout, caption, seconds, ct) + "[v]";
 
         string[] audio = ["-an"];
         if (bgm != null)
@@ -253,6 +230,115 @@ public static class Ffmpeg
         string stage = keyframesOnly ? "変換中（高速モード）" : "変換中";
         await RunWithProgressAsync(args, seconds, stage, progress, output, work, ct);
         return output;
+    }
+
+    static async Task<List<double>> DurationsAsync(IReadOnlyList<string> inputs)
+    {
+        var list = new List<double>();
+        foreach (var f in inputs) list.Add(await GetDurationAsync(f));
+        return list;
+    }
+
+    /// <summary>つないだときの t 秒目が、何番目のファイルの何秒目か。</summary>
+    static (int Index, double Local) Locate(IReadOnlyList<double> durations, double t)
+    {
+        int i = 0;
+        while (i < durations.Count - 1 && t >= durations[i]) t -= durations[i++];
+        return (i, t);
+    }
+
+    /// <summary>
+    /// ffmpeg に渡す入力の引数を返す。ファイルが複数なら連結リスト（listName）を作業用フォルダに書く。
+    /// 各ファイルの長さも書いておくと、途中の時刻へすぐ移動できる（書かないと先頭から読み進めるので遅い）。
+    /// </summary>
+    static async Task<string[]> SourceArgsAsync(string work, string listName, IReadOnlyList<string> files,
+        IReadOnlyList<double> durations, CancellationToken ct)
+    {
+        if (files.Count == 1) return ["-i", files[0]];
+        var sb = new StringBuilder();
+        for (int i = 0; i < files.Count; i++)
+            sb.Append("file '").Append(files[i].Replace('\\', '/').Replace("'", @"'\''")).Append("'\n")
+              .Append("duration ").Append(durations[i].ToString("0.######", Inv)).Append('\n');
+        await File.WriteAllTextAsync(Path.Combine(work, listName), sb.ToString(), new UTF8Encoding(false), ct);
+        return ["-f", "concat", "-safe", "0", "-i", listName];
+    }
+
+    /// <summary>
+    /// 映像の仕上げ（HDR の色直し・縦長化・文字入れ）を chain の後ろにつなげる。変換とプレビューで同じものを使う。
+    /// 文字があれば、字幕ファイルとフォントを作業用フォルダ work に用意する。
+    /// </summary>
+    static async Task<string> FinishVideoAsync(string work, string chain, string? hdr, Layout layout,
+        Caption? caption, double seconds, CancellationToken ct)
+    {
+        // iPhone などの HDR 動画はそのままだと色が白っぽくなるので、普通の色（SDR）に直す
+        if (hdr != null)
+            chain += $",zscale=tin={hdr}:pin=bt2020:min=bt2020nc:t=bt709:p=bt709:m=bt709:npl=203:r=tv,format=yuv420p";
+
+        string filter = layout == Layout.Crop
+            ? $"{chain},crop='min(iw,ih*9/16)':'min(ih,iw*16/9)',scale=1080:1920,setsar=1"
+            : $"{chain},split[a][b];" +
+              // 背景は1/4解像度でぼかしてから拡大する（見た目はほぼ同じで、等倍でぼかすより約4倍速い）
+              "[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=5:2,scale=1080:1920[bg];" +
+              "[b]scale=1080:1920:force_original_aspect_ratio=decrease[fg];" +
+              "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1";
+
+        // 文字は字幕ファイル（ASS）にして libass で描く。フォントは作業用フォルダにコピーして読ませる
+        if (caption != null)
+        {
+            Directory.CreateDirectory(Path.Combine(work, "fonts"));
+            File.Copy(caption.FontFile, Path.Combine(work, "fonts", Path.GetFileName(caption.FontFile)));
+            await File.WriteAllTextAsync(Path.Combine(work, "caption.ass"), BuildAss(caption, seconds), new UTF8Encoding(false), ct);
+            filter += ",ass=caption.ass:fontsdir=fonts";
+        }
+        return filter;
+    }
+
+    /// <summary>
+    /// 仕上がりの「最初・真ん中・最後」の画を、変換と同じ処理で描いて PNG（360×640）で返す。
+    /// 元の動画はその3か所しか読まないので、PC の性能にほとんど左右されない。
+    /// </summary>
+    public static async Task<List<byte[]>> RenderPreviewAsync(IReadOnlyList<string> inputs, double totalSeconds,
+        double targetSeconds, double introSeconds, Layout layout, Caption? caption, CancellationToken ct)
+    {
+        string work = Path.Combine(Path.GetTempPath(), $"timelapse_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(work);
+        try
+        {
+            double factor = Math.Max(1, totalSeconds / targetSeconds);
+            double seconds = Math.Round(totalSeconds / factor * OutputFps) / OutputFps; // 出来上がりの長さ
+            double cut = totalSeconds - introSeconds * factor;                         // 元動画で「完成品」が始まる位置
+            var durations = await DurationsAsync(inputs);
+            string filter = await FinishVideoAsync(work, "[0:v]null", await GetHdrTransferAsync(inputs[0]), layout,
+                caption, seconds, ct) + ",scale=360:640[v]";
+
+            var pngs = new List<byte[]>();
+            foreach (double t in new[] { 0, seconds / 2, seconds - 1.0 / OutputFps })
+            {
+                // 出来上がりの t 秒目が、元の動画の何秒目か（完成品を冒頭に移している場合も考える）
+                double src = introSeconds > 0 && t < introSeconds ? cut + t * factor
+                    : (t - Math.Max(0, introSeconds)) * factor;
+                var (k, local) = Locate(durations, Math.Clamp(src, 0, Math.Max(0, totalSeconds - 0.1)));
+                string png = Path.Combine(work, $"preview{pngs.Count}.png");
+                string stderr = "";
+                // その時刻を含むファイルだけを開いて1コマ描く。動画の終わりぎわは映像が音より少し短くて
+                // 画が無いことがあるので、そのときは2秒前を描く
+                foreach (double at in new[] { local, Math.Max(0, local - 2) })
+                {
+                    (_, _, stderr) = await RunAsync(FfmpegPath,
+                        ["-hide_banner", "-loglevel", "error", "-y", "-ss", Sec(at), "-i", inputs[k],
+                         "-filter_complex", filter, "-map", "[v]", "-frames:v", "1", png], work);
+                    if (File.Exists(png)) break;
+                }
+                if (!File.Exists(png))
+                    throw new InvalidOperationException("プレビューを作れませんでした。\n" + stderr.Trim());
+                pngs.Add(await File.ReadAllBytesAsync(png, ct));
+            }
+            return pngs;
+        }
+        finally
+        {
+            try { Directory.Delete(work, true); } catch { }
+        }
     }
 
     /// <summary>文字入れ用の字幕ファイル（ASS）を作る。画面は 1080×1920、動画の最初から最後まで表示する。</summary>
@@ -352,9 +438,12 @@ public static class Ffmpeg
         return psi;
     }
 
-    static async Task<(int code, string stdout, string stderr)> RunAsync(string exe, IEnumerable<string> args)
+    static async Task<(int code, string stdout, string stderr)> RunAsync(string exe, IEnumerable<string> args,
+        string? workDir = null)
     {
-        using var p = Process.Start(NewStartInfo(exe, args)) ?? throw new InvalidOperationException($"{exe} を起動できません");
+        var psi = NewStartInfo(exe, args);
+        if (workDir != null) psi.WorkingDirectory = workDir;
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException($"{exe} を起動できません");
         var o = p.StandardOutput.ReadToEndAsync();
         var e = p.StandardError.ReadToEndAsync();
         await p.WaitForExitAsync();
