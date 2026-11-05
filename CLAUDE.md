@@ -11,6 +11,8 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 | `src/FontCatalog.cs` | フォント一覧と、libass に渡すフォントファイル・ファミリー名の解決（WPF） |
 | `src/MainWindow.xaml(.cs)` | 画面。投稿先の上限は `Platforms`（2026年10月時点の値） |
 | `src/SettingsWindow.xaml(.cs)` | 「設定」の小さな画面（画面の色・保存先・作成が終わったとき）と、テーマを切り替える `ApplyTheme` |
+| `src/IntroWindow.xaml(.cs)` | 「冒頭を選ぶ…」の画面（元の動画・選びかた・移す／コピー・冒頭の長さとフェード・2 本のバー）と、選んだ内容 `IntroChoice` |
+| `src/RangeBar.cs` | その画面の横長のバー（目盛り・選んだ範囲・今の位置。ドラッグで範囲を選ぶ） |
 | `src/SleepWindow.xaml(.cs)` | 「終わったら PC をスリープ」の 60 秒のお知らせ（true を返したら呼んだ側が `SetSuspendState`） |
 | `src/AppSettings.cs` | 前回の設定（`%LOCALAPPDATA%\TimelapseShorts\settings.json`）。閉じるときと設定画面を閉じたときに書く |
 | `tests/WinCheck` | CI の Windows で、画面と変換を実際に動かして確かめるテスト |
@@ -43,9 +45,17 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 ## 設計の要点（直すときの注意）
 
 - 間引き: `settb=AVTB,setpts=(PTS-STARTPTS)/倍率,fps=30:eof_action=pass` と `-frames:v`（総尺ぴったりのコマ数）。拾う間隔がキーフレーム間隔以上なら `-skip_frame nokey`（高速モード）。
-- 冒頭移動: 完成品（最後の N 秒）と本編を別の入力で読み、`trim=end_frame` と `concat` でつなぐ。元の動画はどこも1回しか読まない。
-  完成品のフェード（`IntroFades`）は、つなぐ前の完成品の側だけにコマ数で `fade` をかける（`fade=t=out` はそのあとのコマを全部黒にするので、
+- 冒頭（`Ffmpeg.Intro`）: 元の動画の [Start, End] 秒を、出来上がりの最初の Seconds 秒にする（倍速 (End−Start)/Seconds。1 未満はゆっくり）。
+  本編は、移すなら [0, Start] と [End, 終わり]、コピーなら全部。本編の倍速 = 本編に使う元の長さ ÷（総尺 − Seconds）（`MainFactor`、1 未満なら等速）。
+  「数値で（最後の N 秒）」は `Intro.Last` で、移すなら今までと同じ結果（全体と同じ倍速）。出来上がりの t 秒目が元の何秒目かは `SourceTime`
+  （静止画のプレビューもこれを使う）。変換は部分ごとに別の入力で読み（`AddPart`。その時刻を含むファイルから、要るぶんだけ `-t` で）、
+  冒頭は `trim=end_frame` でコマ数ちょうどに切って、`concat` でつなぐ。元の動画はどこも1回しか読まない（コピーなら冒頭の部分だけ2回）。
+  完成品のフェード（`IntroFades`）は、つなぐ前の冒頭の側だけにコマ数で `fade` をかける（`fade=t=out` はそのあとのコマを全部黒にするので、
   つないだあとにはかけない）。文字はそのあとで全体に描くのでフェードしない。10 ビット（HDR）のままかかる。静止画のプレビューには出ない。
+  WinCheck は、明るさが時刻で決まる動画（`geq=lum='16+T*7'`）で、各コマの明るさから元の秒を読んで `SourceTime` と比べる。
+- 冒頭を選ぶ画面: 見ながら選んだ範囲は動画ごとなので覚えない（動画を入れ替えたら選び直し。`RefreshList`）。選びかた・長さ・移す／コピー・フェードは覚える。
+  動画は `MediaElement` で再生し、開けない（HEVC の拡張機能が無いなど）か HDR なら、バーの位置の画を `RenderSourceFrameAsync` で描く
+  （描いている途中に動かしたら、終わってから最後の位置だけを描く）。複数ファイルは、その時刻を含むファイルを開き、終わったら次へ。
 - 複数ファイルは concat の連結リストに `duration` を書く（無いと途中へ移動できず遅い）。
   連結リストの途中への `-ss` は、音の無い動画で時刻が半端だと ffmpeg の丸めのせいで失敗し、先頭から読み直して遅くなる。
   そのため完成品の部分とプレビューは、`Locate` でその時刻を含むファイルから読む。

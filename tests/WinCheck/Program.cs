@@ -105,7 +105,7 @@ static class Program
         Refresh();
         Check("見ながら選んだ範囲（2分05秒を 5 秒に）", w.StartButton.IsEnabled
             && w.IntroSummary.Text == "50:00〜52:05 を 5 秒にして移す（フェード 0.3／0.3 秒）"
-            && w.InfoText.Text.StartsWith("合計 1:00:00 → 2:59（20倍速）") // 本編は 3475 秒を 174 秒に,
+            && w.InfoText.Text.StartsWith("合計 1:00:00 → 2:59（20倍速）"), // 本編は 3475 秒を 174 秒に
             $"{w.IntroSummary.Text} / {w.InfoText.Text}");
         Call("RefreshList");
         Check("動画を入れ替えたら、見ながら選んだ範囲は選び直す", !Get<IntroChoice>("_intro").HasRange && !w.StartButton.IsEnabled);
