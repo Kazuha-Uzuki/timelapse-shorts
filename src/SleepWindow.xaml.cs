@@ -31,7 +31,7 @@ public partial class SleepWindow : Window
     }
 
     void ShowLeft() =>
-        CountText.Text = $"あと {_left} 秒で PC をスリープします。PC を使っているときは「スリープしない」を押してください。";
+        CountText.Text = $"あと {_left} 秒で PC をスリープします。\nPC を使っているときは「スリープしない」を押してください。";
 
     void SleepNowButton_Click(object sender, RoutedEventArgs e) => DialogResult = true;
 }
