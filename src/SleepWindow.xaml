@@ -1,0 +1,18 @@
+<Window x:Class="TimelapseShorts.SleepWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="まもなくスリープします" Width="440" SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" Topmost="True" FontFamily="Yu Gothic UI" FontSize="14"
+        Background="{DynamicResource ApplicationBackgroundBrush}"
+        Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+    <!-- PC を使っている人が気づかずに眠らされないよう、いちばん手前に出して、Enter / Esc では「スリープしない」にする -->
+    <StackPanel Margin="20,16,20,20">
+        <TextBlock Text="作成が終わりました" FontWeight="Bold" FontSize="15"/>
+        <TextBlock x:Name="CountText" Margin="0,8,0,0" TextWrapping="Wrap"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="SleepNowButton" Content="今すぐスリープ" Padding="16,5" Click="SleepNowButton_Click"/>
+            <Button x:Name="StopButton" Content="スリープしない" Padding="16,5" Margin="8,0,0,0"
+                    IsDefault="True" IsCancel="True"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

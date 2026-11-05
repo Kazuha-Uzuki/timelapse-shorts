@@ -10,7 +10,8 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 | `src/Ffmpeg.cs` | 変換ロジック（エンコーダー検出・間引き・冒頭移動・HDR・縦長化・BGM・文字入れ・プレビュー）。WPF に依存しない |
 | `src/FontCatalog.cs` | フォント一覧と、libass に渡すフォントファイル・ファミリー名の解決（WPF） |
 | `src/MainWindow.xaml(.cs)` | 画面。投稿先の上限は `Platforms`（2026年10月時点の値） |
-| `src/SettingsWindow.xaml(.cs)` | 「設定」の小さな画面（画面の色）と、テーマを切り替える `ApplyTheme` |
+| `src/SettingsWindow.xaml(.cs)` | 「設定」の小さな画面（画面の色・保存先・作成が終わったとき）と、テーマを切り替える `ApplyTheme` |
+| `src/SleepWindow.xaml(.cs)` | 「終わったら PC をスリープ」の 60 秒のお知らせ（true を返したら呼んだ側が `SetSuspendState`） |
 | `src/AppSettings.cs` | 前回の設定（`%LOCALAPPDATA%\TimelapseShorts\settings.json`）。閉じるときと設定画面を閉じたときに書く |
 | `tests/WinCheck` | CI の Windows で、画面と変換を実際に動かして確かめるテスト |
 | `.github/workflows/build.yml` | exe ビルド、LGPL 版 FFmpeg と Google Fonts の同梱、WinCheck、zip 化、Release への添付 |
@@ -56,4 +57,9 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
   色は直接書かず `{DynamicResource TextFillColorSecondaryBrush}` などテーマの色を使う（プレビュー枠の黒と音量バーの緑・赤だけは固定）。
   自分で作る Style は `BasedOn="{StaticResource {x:Type …}}"` にする（付けないと Fluent の見た目にならない）。
   窓の背景は `ApplicationBackgroundBrush` を明示している（Fluent の既定は透明＝Mica）。
+- 保存先: `Ffmpeg.ConvertAsync` の最後の引数 `outputDir`（null なら1本目の動画と同じフォルダ）。決まったフォルダが無ければ、変換を始める前に確かめる。
+- 作成が終わったとき: 音は `MessageBeep`、フォルダは `explorer /select`。スリープは作成ボタンの横の `SleepCheck`（覚えない・1回ごとにオフ）で、
+  成功したときだけ、窓を前に出して `SleepWindow`（Enter / Esc は「スリープしない」）→ `SetSuspendState(false, false, false)`。
+  WinCheck では `SleepWindow` の返す値だけを確かめ、本当にスリープはさせない（CI の PC が止まる）。
+- 設定画面のラジオボタンは2組あるので `GroupName` で分けている（同じパネルにあると1組として扱われる）。
 - WinCheck: CI の画面は 1024×768 なので、窓をそれより大きくするために `WM_GETMINMAXINFO` と WPF の `_trackMaxWidthDeviceUnits` などを広げている。

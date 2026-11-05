@@ -23,6 +23,11 @@ public sealed class AppSettings
     public int Position { get; set; }              // 0 上 / 1 中央 / 2 下
     public bool TextBack { get; set; }             // 背景あり（帯）
     public string TextSize { get; set; } = "80";
+    public bool UseOutputFolder { get; set; }      // true = 決まったフォルダに保存 / false = 元の動画と同じフォルダ
+    public string? OutputFolder { get; set; }      // 決まったフォルダ（「同じフォルダ」に戻しても覚えておく）
+    public bool DoneSound { get; set; }            // 作成が終わったら音で知らせる
+    public bool DoneOpenFolder { get; set; }       // 作成が終わったら保存先のフォルダを開く
+    // 「終わったら PC をスリープ」は、つけたまま忘れると使っている最中に眠ってしまうので覚えない（毎回オフで始まる）
 
     /// <summary>保存先。テストでは別の場所に変える。</summary>
     public static string FilePath { get; set; } = Path.Combine(

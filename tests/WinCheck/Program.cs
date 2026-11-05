@@ -4,6 +4,8 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
@@ -19,6 +21,8 @@ static class Program
     static int _failures;
     static MainWindow? _window;        // CheckWindow で作った画面（最後にプレビューの表示も確かめる）
     static List<Ffmpeg.PreviewFrame>? _previewFrames; // RunAsync で作ったプレビューの画
+    // 設定画面で選ぶ「決まったフォルダ」（テストのあいだだけ使う）
+    static readonly string OutputFolder = Path.Combine(Path.GetTempPath(), "wincheck 保存先");
     // 手動実行で「スクリーンショット」を ON にしたときだけ、画面の画像をログに出す（見た目の確認用）
     static readonly bool Shots = Environment.GetEnvironmentVariable("WINCHECK_SHOTS") == "1";
 
@@ -143,6 +147,13 @@ static class Program
         // 文字なし（比べる基準）
         string plain = await ConvertAsync(video, total, encoder, "plain", null, null);
         string plainHash = await FrameHashAsync(plain);
+
+        // 保存先を決まったフォルダにすると、元の動画の横ではなくそこに作る
+        string outDir = Path.Combine(work, "保存先 フォルダ");
+        Directory.CreateDirectory(outDir);
+        string moved = await ConvertAsync(video, total, encoder, "outdir", null, null, outputDir: outDir);
+        Check("決まったフォルダに保存する", Path.GetDirectoryName(moved) == outDir && File.Exists(moved)
+                                         && !File.Exists(Path.Combine(work, "テスト 動画_outdir.mp4")), moved);
 
         // 同梱フォントそれぞれで文字を入れる。フォントが正しく選ばれていれば、どの2つも見た目が違うはず
         var hashes = new Dictionary<string, string>();
@@ -288,10 +299,23 @@ static class Program
             CheckLayout(w, 1920, 1030, "最大化"); // フルHDの画面いっぱい（プレビューが大きくなる）
 
             // 設定画面からダークにする（実際の操作と同じ道すじで、設定にも「Dark」が入る）
-            var settings = new SettingsWindow((AppSettings)typeof(MainWindow).GetField("_settings", F)!.GetValue(w)!) { Owner = w };
+            var appSettings = (AppSettings)typeof(MainWindow).GetField("_settings", F)!.GetValue(w)!;
+            Directory.CreateDirectory(OutputFolder);
+            appSettings.OutputFolder = OutputFolder; // 先に入れておく（無いとフォルダを選ぶダイアログが出て止まる）
+            var settings = new SettingsWindow(appSettings) { Owner = w };
             settings.Show();
-            Check("設定画面: 最初は「Windows に合わせる」", settings.SystemRadio.IsChecked == true);
+            Check("設定画面: 最初は「Windows に合わせる」「元の動画と同じフォルダ」・終わったときは何もしない",
+                settings.SystemRadio.IsChecked == true && settings.SameFolderRadio.IsChecked == true
+                && settings.SoundCheck.IsChecked == false && settings.OpenFolderCheck.IsChecked == false
+                && settings.FolderText.Text == OutputFolder);
             settings.DarkRadio.IsChecked = true;
+            settings.FixedFolderRadio.IsChecked = true;
+            settings.SoundCheck.IsChecked = true;
+            settings.OpenFolderCheck.IsChecked = true;
+            Check("設定画面: 色と保存先は別々に選べる", settings.DarkRadio.IsChecked == true && settings.FixedFolderRadio.IsChecked == true
+                                                 && settings.SameFolderRadio.IsChecked == false);
+            Check("設定画面: 選んだ内容が設定に入る", appSettings is { Theme: "Dark", UseOutputFolder: true, DoneSound: true, DoneOpenFolder: true },
+                $"{appSettings.Theme} / {appSettings.UseOutputFolder} / {appSettings.DoneSound} / {appSettings.DoneOpenFolder}");
             settings.UpdateLayout();
             w.UpdateLayout();
             Check("ダーク: 背景が暗く、文字が明るい", Luminance(w.Background) < 0.2 && Luminance(w.Foreground) > 0.8
@@ -304,6 +328,17 @@ static class Program
             settings.Close();
             CheckLayout(w, 1480, 720, "ダーク標準");
             CheckLayout(w, 1240, 650, "ダーク最小");
+            // 作成が終わったあと（「出力フォルダを開く」が出て、下の段が狭くなる）でも収まるか
+            string status = w.StatusText.Text;
+            w.OpenFolderButton.Visibility = Visibility.Visible;
+            w.StatusText.Text = "完成しました（1:02:03）: 作業 2026-11-01 (1)_youtube.mp4";
+            CheckLayout(w, 1240, 650, "ダーク最小・作成後");
+            w.OpenFolderButton.Visibility = Visibility.Collapsed;
+            w.StatusText.Text = status;
+            Check("終わったらスリープ: 最初はオフで、作成中でも選べる", w.SleepCheck.IsChecked == false
+                                                                && !w.SettingsPanel.IsAncestorOf(w.SleepCheck));
+            CheckSleepWindow(w);
+            w.SleepCheck.IsChecked = true; // これは次の起動に持ち越さないはず
 
             // 次の起動で戻るか確かめるため、最初とは違う値にしておく
             ((RadioButton)w.PlatformPanel.Children[2]).IsChecked = true; // TikTok
@@ -331,6 +366,35 @@ static class Program
         }
     }
 
+    /// <summary>
+    /// スリープのお知らせ。数え終わったら true（＝スリープする）、「スリープしない」なら false。
+    /// ここでは窓の返す値だけを確かめる（本当にスリープすると、テスト用の PC が止まってしまう）。
+    /// </summary>
+    static void CheckSleepWindow(Window owner)
+    {
+        var sw = Stopwatch.StartNew();
+        bool? counted = new SleepWindow(2) { Owner = owner }.ShowDialog();
+        Check("スリープのお知らせ: 数え終わるとスリープする", counted == true && sw.Elapsed.TotalSeconds is > 1.5 and < 6,
+            $"{counted} / {sw.Elapsed.TotalSeconds:0.0}秒");
+
+        var stop = new SleepWindow { Owner = owner };
+        string firstText = "";
+        stop.ContentRendered += (_, _) =>
+        {
+            firstText = stop.CountText.Text;
+            var client = (FrameworkElement)VisualTreeHelper.GetChild(stop, 0);
+            Shot("sleep-dark", client, client.RenderSize);
+            ((IInvokeProvider)new ButtonAutomationPeer(stop.StopButton).GetPattern(PatternInterface.Invoke)!).Invoke();
+        };
+        sw.Restart();
+        bool? stopped = stop.ShowDialog();
+        Check("スリープのお知らせ: 「スリープしない」でやめられる", stopped == false && sw.Elapsed.TotalSeconds < 6
+                                                          && firstText.StartsWith("あと 60 秒で"),
+            $"{stopped} / {sw.Elapsed.TotalSeconds:0.0}秒 / {firstText}");
+        Check("スリープのお知らせ: Enter でも「スリープしない」", stop.StopButton.IsDefault && stop.StopButton.IsCancel
+                                                             && !stop.SleepNowButton.IsDefault);
+    }
+
     /// <summary>閉じたときの設定が、次に開いた画面に戻るか。設定のファイルが壊れていても開けるか。</summary>
     static void CheckRestore(string font)
     {
@@ -345,6 +409,10 @@ static class Program
             File.ReadAllText(AppSettings.FilePath).ReplaceLineEndings(" "));
         Check("前回の色（ダーク）で開く", Application.Current.ThemeMode == ThemeMode.Dark && Luminance(w.Background) < 0.2,
             $"{Application.Current.ThemeMode}");
+        var restored = (AppSettings)typeof(MainWindow).GetField("_settings", F)!.GetValue(w)!;
+        Check("前回の保存先・終わったときの動きに戻る",
+            restored is { UseOutputFolder: true, DoneSound: true, DoneOpenFolder: true } && restored.OutputFolder == OutputFolder);
+        Check("「終わったら PC をスリープ」は持ち越さない（オフで始まる）", w.SleepCheck.IsChecked == false);
         w.Close();
 
         File.WriteAllText(AppSettings.FilePath, "{ こわれた");
@@ -360,6 +428,7 @@ static class Program
             Check("設定のファイルが壊れていても開ける（最初の設定になる）", false, ex.ToString());
         }
         File.Delete(AppSettings.FilePath);
+        try { Directory.Delete(OutputFolder, true); } catch { }
     }
 
     /// <summary>
@@ -454,9 +523,9 @@ static class Program
 
     /// <summary>30秒の動画を5秒のタイムラプスにする（アプリと同じ処理）。</summary>
     static Task<string> ConvertAsync(string video, double total, string encoder, string suffix,
-        Ffmpeg.Bgm? bgm, Ffmpeg.Caption? caption, double intro = 0) =>
+        Ffmpeg.Bgm? bgm, Ffmpeg.Caption? caption, double intro = 0, string? outputDir = null) =>
         Ffmpeg.ConvertAsync([video], total, 5, intro, Ffmpeg.Layout.Crop, bgm, caption, suffix, encoder,
-            new Progress<Ffmpeg.Progress>(_ => { }), CancellationToken.None);
+            new Progress<Ffmpeg.Progress>(_ => { }), CancellationToken.None, outputDir);
 
     /// <summary>真ん中あたり（75コマ目）の画像のハッシュ。</summary>
     static async Task<string> FrameHashAsync(string video) =>

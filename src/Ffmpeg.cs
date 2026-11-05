@@ -142,11 +142,12 @@ public static class Ffmpeg
     /// 入力（複数なら名前順に連結）を targetSeconds 秒の縦長タイムラプスにする（元が短ければ等速のまま）。
     /// introSeconds が 0 より大きければ、タイムラプスの最後の introSeconds 秒（完成品）を冒頭に移動する。
     /// bgm / caption があれば、BGM と文字を入れる。作ったファイルのパスを返す。
+    /// outputDir が null なら、1本目の動画と同じフォルダに作る。
     /// </summary>
     public static async Task<string> ConvertAsync(
         IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds, double introSeconds,
         Layout layout, Bgm? bgm, Caption? caption, string suffix, string encoder,
-        IProgress<Progress> progress, CancellationToken ct)
+        IProgress<Progress> progress, CancellationToken ct, string? outputDir = null)
     {
         if (introSeconds > 0 && totalSeconds - introSeconds * Math.Max(1, totalSeconds / targetSeconds) <= 0)
             throw new ArgumentOutOfRangeException(nameof(introSeconds), "冒頭に移動する秒数が総尺以上です");
@@ -157,7 +158,7 @@ public static class Ffmpeg
         try
         {
             return await ConvertInAsync(work, inputs, totalSeconds, targetSeconds, introSeconds, layout, bgm, caption,
-                suffix, encoder, progress, ct);
+                suffix, encoder, progress, ct, outputDir);
         }
         finally
         {
@@ -168,7 +169,7 @@ public static class Ffmpeg
     static async Task<string> ConvertInAsync(string work,
         IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds, double introSeconds,
         Layout layout, Bgm? bgm, Caption? caption, string suffix, string encoder,
-        IProgress<Progress> progress, CancellationToken ct)
+        IProgress<Progress> progress, CancellationToken ct, string? outputDir)
     {
         string first = inputs[0];
         double factor = Math.Max(1, totalSeconds / targetSeconds);       // 何倍速にするか
@@ -224,7 +225,7 @@ public static class Ffmpeg
             audio = ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"];
         }
 
-        string output = UniquePath(Path.Combine(Path.GetDirectoryName(first)!,
+        string output = UniquePath(Path.Combine(outputDir ?? Path.GetDirectoryName(first)!,
             $"{Path.GetFileNameWithoutExtension(first)}_{suffix}.mp4"));
         args.AddRange(["-filter_complex", filter, "-map", "[v]", .. audio,
             "-r", OutputFps.ToString(Inv), "-frames:v", frames.ToString(Inv)]);

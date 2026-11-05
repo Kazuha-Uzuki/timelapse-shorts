@@ -61,7 +61,7 @@ public partial class MainWindow : Window
     string? _measuringFile; // 音量を測っている最中の曲
     Platform _platform = Platforms[0];
     string? _encoder;
-    string? _lastOutputDir;
+    string? _lastOutput; // 最後に作った動画
     CancellationTokenSource? _cts;
     bool _busy, _ready;
     List<Ffmpeg.PreviewFrame>? _previewFrames; // プレビュー欄の画（最初・真ん中・最後）。作っていなければ null
@@ -73,6 +73,14 @@ public partial class MainWindow : Window
     [DllImport("kernel32.dll")]
     static extern uint SetThreadExecutionState(uint flags);
     const uint EsContinuous = 0x80000000, EsSystemRequired = 0x00000001;
+
+    // 作成が終わったときの音（Windows の「一般の警告音」）と、PC のスリープ
+    [DllImport("user32.dll")]
+    static extern bool MessageBeep(uint type);
+    const uint MbIconAsterisk = 0x40;
+
+    [DllImport("powrprof.dll", SetLastError = true)]
+    static extern bool SetSuspendState(bool hibernate, bool forceCritical, bool disableWakeEvent);
 
     public MainWindow()
     {
@@ -490,6 +498,7 @@ public partial class MainWindow : Window
             MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
+        if (!TryGetOutputDir(out string? outputDir)) return;
         Ffmpeg.Bgm? bgm = _bgmFile == null ? null : new Ffmpeg.Bgm(_bgmFile, _bgmSeconds, s.FadeIn, s.FadeOut, VolumeSlider.Value);
         _cts = new CancellationTokenSource();
         SetBusy(true, cancellable: true);
@@ -502,14 +511,16 @@ public partial class MainWindow : Window
         });
         var layout = BlurRadio.IsChecked == true ? Ffmpeg.Layout.Blur : Ffmpeg.Layout.Crop;
         var sw = Stopwatch.StartNew();
+        bool done = false;
         SetThreadExecutionState(EsContinuous | EsSystemRequired);
         try
         {
             string output = await Ffmpeg.ConvertAsync(_files, _totalSeconds, s.Target, s.Intro, layout, bgm, caption,
-                _platform.Key, _encoder, progress, _cts.Token);
-            _lastOutputDir = System.IO.Path.GetDirectoryName(output);
+                _platform.Key, _encoder, progress, _cts.Token, outputDir);
+            _lastOutput = output;
             StatusText.Text = $"完成しました（{Fmt(sw.Elapsed.TotalSeconds)}）: {System.IO.Path.GetFileName(output)}";
             OpenFolderButton.Visibility = Visibility.Visible;
+            done = true;
         }
         catch (OperationCanceledException)
         {
@@ -529,6 +540,49 @@ public partial class MainWindow : Window
             _cts = null;
             SetBusy(false);
         }
+        if (done) AfterDone();
+    }
+
+    /// <summary>
+    /// 保存先のフォルダ（null なら元の動画と同じフォルダ）。決まったフォルダが見つからなければ（外付けのドライブを
+    /// 外したなど）、変換を始める前に確かめる（何時間も変換したあとで保存できないのを防ぐ）。やめるなら false。
+    /// </summary>
+    bool TryGetOutputDir(out string? dir)
+    {
+        dir = null;
+        if (!_settings.UseOutputFolder || _settings.OutputFolder is not { } folder) return true;
+        if (Directory.Exists(folder))
+        {
+            dir = folder;
+            return true;
+        }
+        return MessageBox.Show(this,
+            $"保存先のフォルダが見つかりません。\n{folder}\n\n今回は、元の動画と同じフォルダに保存しますか？\n" +
+            "（「いいえ」で作成をやめます。保存先は「設定」で変えられます）",
+            "保存先の確認", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+    }
+
+    /// <summary>作成が終わったあとの動き（設定画面の「作成が終わったとき」と、「終わったら PC をスリープ」のとおり）。</summary>
+    void AfterDone()
+    {
+        if (_settings.DoneSound) MessageBeep(MbIconAsterisk);
+        if (_settings.DoneOpenFolder) OpenOutputFolder();
+        if (SleepCheck.IsChecked != true) return;
+        SleepCheck.IsChecked = false; // 1回ごと。次に作成するときは、またつける
+        // PC を使っている人が気づけるよう、お知らせを見えるところに出して音も鳴らす
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        if (!_settings.DoneSound) MessageBeep(MbIconAsterisk);
+        if (new SleepWindow { Owner = this }.ShowDialog() != true) return;
+        if (!SetSuspendState(false, false, false))
+            StatusText.Text += "\nPC をスリープできませんでした（この PC では使えないことがあります）。";
+    }
+
+    /// <summary>できた動画を選んだ状態で、保存先のフォルダを開く。</summary>
+    void OpenOutputFolder()
+    {
+        if (_lastOutput != null)
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_lastOutput}\"") { UseShellExecute = true });
     }
 
     /// <summary>出来上がりの「最初・真ん中・最後」の画を作って、右のプレビュー欄に出す。</summary>
@@ -644,11 +698,7 @@ public partial class MainWindow : Window
 
     void CancelButton_Click(object sender, RoutedEventArgs e) => _cts?.Cancel();
 
-    void OpenFolderButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_lastOutputDir != null)
-            Process.Start(new ProcessStartInfo("explorer.exe", _lastOutputDir) { UseShellExecute = true });
-    }
+    void OpenFolderButton_Click(object sender, RoutedEventArgs e) => OpenOutputFolder();
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {

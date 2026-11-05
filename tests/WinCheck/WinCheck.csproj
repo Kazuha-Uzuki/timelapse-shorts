@@ -20,6 +20,8 @@
     <Compile Include="../../src/MainWindow.xaml.cs" Link="MainWindow.xaml.cs" />
     <Page Include="../../src/SettingsWindow.xaml" Link="SettingsWindow.xaml" />
     <Compile Include="../../src/SettingsWindow.xaml.cs" Link="SettingsWindow.xaml.cs" />
+    <Page Include="../../src/SleepWindow.xaml" Link="SleepWindow.xaml" />
+    <Compile Include="../../src/SleepWindow.xaml.cs" Link="SleepWindow.xaml.cs" />
   </ItemGroup>
 
 </Project>
