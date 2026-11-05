@@ -64,7 +64,7 @@
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <Border x:Name="VideoFrame" Background="#1e1e1e" CornerRadius="4" ClipToBounds="True"
+                <Border x:Name="VideoFrame" Background="#1e1e1e" CornerRadius="4"
                         MouseLeftButtonUp="VideoFrame_MouseLeftButtonUp">
                     <Grid>
                         <Image x:Name="FrameImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
