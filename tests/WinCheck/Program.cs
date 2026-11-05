@@ -287,10 +287,13 @@ static class Program
             {
                 Marshal.WriteInt32(lParam, 32, 4000); // MINMAXINFO.ptMaxTrackSize.x
                 Marshal.WriteInt32(lParam, 36, 4000); // MINMAXINFO.ptMaxTrackSize.y
-                handled = true;
             }
-            return IntPtr.Zero;
+            return IntPtr.Zero; // WPF 側の処理も続けて行わせる
         });
+        // WPF は窓を作ったときの上限を覚えていて、大きさを変える前にそれで切り詰めるので、そちらも広げる
+        foreach (var name in new[] { "_trackMaxWidthDeviceUnits", "_trackMaxHeightDeviceUnits" })
+            if (typeof(Window).GetField(name, F) is { } field)
+                field.SetValue(w, Convert.ChangeType(4000, field.FieldType));
     }
 
     /// <summary>窓を width×height にして、切れている部品がないか・ボタンが窓に収まるかを確かめる。</summary>
