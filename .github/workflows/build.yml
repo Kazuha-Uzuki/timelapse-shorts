@@ -62,6 +62,33 @@ jobs:
           }
           if (-not $worked) { throw "GPUが無いPC向けの代替エンコーダーが動きません" }
 
+      - name: 文字入れ用の Google Fonts を同梱（OFL ライセンス文も一緒に）
+        shell: pwsh
+        run: |
+          $commit = 'bbda7253fc363238b05d97515ca71f8ae49c4fa9' # google/fonts のこの版に固定する
+          $fonts = 'zenmarugothic/ZenMaruGothic-Bold.ttf', 'zenkakugothicnew/ZenKakuGothicNew-Bold.ttf',
+                   'delagothicone/DelaGothicOne-Regular.ttf', 'kiwimaru/KiwiMaru-Medium.ttf',
+                   'shipporimincho/ShipporiMincho-Bold.ttf', 'kleeone/KleeOne-SemiBold.ttf',
+                   'yuseimagic/YuseiMagic-Regular.ttf', 'hachimarupop/HachiMaruPop-Regular.ttf',
+                   'dotgothic16/DotGothic16-Regular.ttf'
+          New-Item -ItemType Directory dist\fonts\licenses -Force | Out-Null
+          foreach ($p in $fonts) {
+            $family, $file = $p -split '/'
+            $base = "https://raw.githubusercontent.com/google/fonts/$commit/ofl"
+            Invoke-WebRequest "$base/$p" -OutFile "dist\fonts\$file"
+            Invoke-WebRequest "$base/$family/OFL.txt" -OutFile "dist\fonts\licenses\$($file -replace '\.ttf$', '')-OFL.txt"
+          }
+          Get-ChildItem dist\fonts -Recurse -File | ForEach-Object { "{0,10:N0}  {1}" -f $_.Length, $_.Name }
+
+      - name: Windows 上で実際に変換して確かめる（BGM・テキスト・フォント）
+        shell: pwsh
+        run: |
+          dotnet build tests/WinCheck/WinCheck.csproj -c Release -o wincheck
+          Copy-Item dist\ffmpeg.exe, dist\ffprobe.exe wincheck\
+          Copy-Item dist\fonts wincheck\fonts -Recurse
+          & wincheck\WinCheck.exe
+          if ($LASTEXITCODE -ne 0) { throw "変換のテストに失敗しました" }
+
       - name: zip にまとめる
         shell: pwsh
         run: |

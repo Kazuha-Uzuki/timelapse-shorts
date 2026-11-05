@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- GitHub Actions（Windows）で、同梱の ffmpeg とフォントを使って実際に変換できるかを確かめる -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../src/Ffmpeg.cs" />
+    <Compile Include="../../src/FontCatalog.cs" />
+  </ItemGroup>
+
+</Project>

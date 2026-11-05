@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using Microsoft.Win32;
 
 namespace TimelapseShorts;
@@ -12,6 +14,26 @@ namespace TimelapseShorts;
 public partial class MainWindow : Window
 {
     static readonly string[] VideoExtensions = [".mp4", ".mov", ".mkv", ".avi", ".m4v", ".mts", ".m2ts", ".wmv", ".webm"];
+    static readonly string[] AudioExtensions = [".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma"];
+
+    /// <summary>文字の色と縁取りの色（どちらも "RRGGBB"）。</summary>
+    sealed record ColorPreset(string Name, string Text, string Outline)
+    {
+        public override string ToString() => Name;
+    }
+
+    static readonly ColorPreset[] ColorPresets =
+    [
+        new("白（黒フチ）", "FFFFFF", "000000"),
+        new("黒（白フチ）", "000000", "FFFFFF"),
+        new("黄（黒フチ）", "FFE600", "000000"),
+        new("ピンク（白フチ）", "FF5FA2", "FFFFFF"),
+    ];
+
+    static readonly string[] Positions = ["上", "中央", "下"]; // Ffmpeg.TextPosition と同じ並び
+
+    /// <summary>入力欄から読み取った設定。</summary>
+    sealed record Settings(int Target, int Intro, double FadeIn, double FadeOut, int TextSize);
 
     /// <summary>投稿先。MaxSeconds は各サービスの上限（2026年10月時点）。</summary>
     sealed record Platform(string Key, string Name, int MaxSeconds, string Note)
@@ -31,6 +53,8 @@ public partial class MainWindow : Window
     readonly List<string> _files = [];
     readonly Dictionary<string, double> _durations = new(StringComparer.OrdinalIgnoreCase);
     double _totalSeconds;
+    string? _bgmFile;
+    double _bgmSeconds;
     Platform _platform = Platforms[0];
     string? _encoder;
     string? _lastOutputDir;
@@ -66,6 +90,16 @@ public partial class MainWindow : Window
             button.Checked += Platform_Checked;
             PlatformPanel.Children.Add(button);
         }
+
+        try { FontBox.ItemsSource = FontCatalog.Load(); }
+        catch (Exception ex) { StatusText.Text = "フォントの一覧を読み込めませんでした: " + ex.Message; }
+        FontBox.SelectedIndex = 0;
+        ColorBox.ItemsSource = ColorPresets;
+        ColorBox.SelectedIndex = 0;
+        PositionBox.ItemsSource = Positions;
+        PositionBox.SelectedIndex = 0;
+        ShowBgm();
+
         _ready = true;
         ((RadioButton)PlatformPanel.Children[0]).IsChecked = true;
     }
@@ -101,17 +135,59 @@ public partial class MainWindow : Window
 
     void Settings_Changed(object sender, RoutedEventArgs e) => RefreshInfo();
 
+    void Settings_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshInfo();
+
     void Window_DragOver(object sender, DragEventArgs e)
     {
         e.Effects = !_busy && e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
+    static bool IsAudio(string path) => AudioExtensions.Contains(System.IO.Path.GetExtension(path).ToLowerInvariant());
+
     async void Window_Drop(object sender, DragEventArgs e)
     {
         if (_busy || e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
-        await AddFilesAsync(paths);
+        // 音楽ファイルは BGM に、それ以外は動画として受け取る
+        if (paths.FirstOrDefault(IsAudio) is { } audio) await SetBgmAsync(audio);
+        if (paths.Where(p => !IsAudio(p)).ToArray() is { Length: > 0 } videos) await AddFilesAsync(videos);
     }
+
+    async void BgmSelectButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Filter = "音楽ファイル|" + string.Join(";", AudioExtensions.Select(x => "*" + x)) + "|すべてのファイル|*.*",
+        };
+        if (dlg.ShowDialog(this) == true) await SetBgmAsync(dlg.FileName);
+    }
+
+    void BgmClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        _bgmFile = null;
+        ShowBgm();
+        RefreshInfo();
+    }
+
+    async Task SetBgmAsync(string file)
+    {
+        SettingsTabs.SelectedItem = BgmTab;
+        try
+        {
+            _bgmSeconds = await Ffmpeg.GetAudioDurationAsync(file);
+            _bgmFile = file;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = ex.Message;
+        }
+        ShowBgm();
+        RefreshInfo();
+    }
+
+    void ShowBgm() => BgmText.Text = _bgmFile == null
+        ? "（なし）音楽ファイルをこの画面にドラッグ＆ドロップするか、「曲を選ぶ」から選んでください"
+        : $"♪ {System.IO.Path.GetFileName(_bgmFile)}（{Fmt(_bgmSeconds)}）";
 
     async void AddButton_Click(object sender, RoutedEventArgs e)
     {
@@ -182,23 +258,40 @@ public partial class MainWindow : Window
         return false;
     }
 
-    /// <summary>入力された総尺と冒頭の秒数を確かめる。問題があればその説明を返す。</summary>
-    string? Validate(out int target, out int intro)
+    /// <summary>「1.5」のような秒数を読む。全角で入力されても読めるようにする。</summary>
+    static bool TryParseNumber(string text, out double value) =>
+        double.TryParse(text.Normalize(NormalizationForm.FormKC).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+
+    /// <summary>入力欄を確かめて設定を返す。問題があればその説明を返す。</summary>
+    string? Validate(out Settings settings)
     {
-        intro = 0;
-        if (!TryParseSeconds(LengthBox.Text, out target) || target < 1 || target > _platform.MaxSeconds)
+        settings = new Settings(0, 0, 0, 0, 0);
+        if (!TryParseSeconds(LengthBox.Text, out int target) || target < 1 || target > _platform.MaxSeconds)
             return $"総尺は 0:01〜{Fmt(_platform.MaxSeconds)} の間で入力してください（例: {Fmt(_platform.DefaultSeconds)}）";
-        if (IntroCheck.IsChecked != true) return null;
-        double length = _totalSeconds > 0 ? Math.Min(_totalSeconds, target) : target;
-        if (!TryParseSeconds(IntroBox.Text, out intro) || intro < 1 || intro >= length)
+        double length = _totalSeconds > 0 ? Math.Min(_totalSeconds, target) : target; // 出来上がりの長さ
+        int intro = 0;
+        if (IntroCheck.IsChecked == true && (!TryParseSeconds(IntroBox.Text, out intro) || intro < 1 || intro >= length))
             return "冒頭に移動する秒数は、1秒以上で総尺より短くしてください";
+        double fadeIn = 0, fadeOut = 0;
+        if (_bgmFile != null && (!TryParseNumber(FadeInBox.Text, out fadeIn) || !TryParseNumber(FadeOutBox.Text, out fadeOut)
+                                 || fadeIn < 0 || fadeOut < 0 || fadeIn + fadeOut > length))
+            return "フェードの秒数は 0 以上で、フェードインとフェードアウトの合計を総尺以内にしてください";
+        int size = 0;
+        if (TextCheck.IsChecked == true)
+        {
+            if (string.IsNullOrWhiteSpace(CaptionBox.Text)) return "入れるテキストを入力してください";
+            if (!TryParseSeconds(SizeBox.Text, out size) || size < 20 || size > 400) return "文字の大きさは 20〜400 にしてください";
+            if (FontBox.SelectedItem == null) return "フォントを選んでください";
+        }
+        settings = new Settings(target, intro, fadeIn, fadeOut, size);
         return null;
     }
 
     void RefreshInfo()
     {
         if (!_ready) return;
-        string? error = Validate(out int target, out _);
+        UpdatePreview();
+        string? error = Validate(out var s);
         if (error != null)
         {
             InfoText.Text = error;
@@ -209,16 +302,58 @@ public partial class MainWindow : Window
         }
         else
         {
-            double factor = Math.Max(1, _totalSeconds / target);
+            double factor = Math.Max(1, _totalSeconds / s.Target);
             InfoText.Text = $"合計 {Fmt(_totalSeconds)} → {Fmt(_totalSeconds / factor)}" +
-                            (factor > 1 ? $"（{factor:0.#}倍速）" : "（元が短いので等速のまま縦長にします）");
+                            (factor > 1 ? $"（{factor:0.#}倍速）" : "（元が短いので等速のまま縦長にします）") +
+                            (_bgmFile != null ? "・BGMあり" : "") + (TextCheck.IsChecked == true ? "・テキストあり" : "");
         }
         UpdateState();
     }
 
+    /// <summary>テキストの見本。文字の色で、縁取りの色を背景にして表示する。</summary>
+    void UpdatePreview()
+    {
+        if (FontBox.SelectedItem is FontCatalog.Item font) PreviewText.FontFamily = font.Family;
+        PreviewText.Text = string.IsNullOrWhiteSpace(CaptionBox.Text) ? "ここに見本が出ます" : CaptionBox.Text.Trim();
+        if (ColorBox.SelectedItem is ColorPreset c)
+        {
+            PreviewText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#" + c.Text));
+            PreviewBorder.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#" + c.Outline));
+        }
+        PreviewBorder.Opacity = TextCheck.IsChecked == true ? 1 : 0.4;
+    }
+
+    /// <summary>テキストの設定から、変換に渡す内容を作る。やめる場合は false。</summary>
+    bool TryMakeCaption(Settings s, out Ffmpeg.Caption? caption)
+    {
+        caption = null;
+        if (TextCheck.IsChecked != true || FontBox.SelectedItem is not FontCatalog.Item font) return true;
+        string text = CaptionBox.Text.Trim();
+        var (file, family, missing) = FontCatalog.Resolve(font, text);
+        if (missing != "" && MessageBox.Show(this,
+                $"フォント「{font.Display}」には次の文字がありません。四角や空白で表示されます。\n\n{missing}\n\nこのまま作成しますか？",
+                "フォントの確認", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return false;
+        var color = ColorPresets[Math.Max(0, ColorBox.SelectedIndex)];
+        caption = new Ffmpeg.Caption(text, file, family, s.TextSize, color.Text, color.Outline,
+            (Ffmpeg.TextPosition)Math.Max(0, PositionBox.SelectedIndex));
+        return true;
+    }
+
     async void StartButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_encoder == null || _files.Count == 0 || Validate(out int target, out int intro) != null) return;
+        if (_encoder == null || _files.Count == 0 || Validate(out var s) != null) return;
+        Ffmpeg.Caption? caption;
+        try
+        {
+            if (!TryMakeCaption(s, out caption)) return;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        Ffmpeg.Bgm? bgm = _bgmFile == null ? null : new Ffmpeg.Bgm(_bgmFile, _bgmSeconds, s.FadeIn, s.FadeOut);
         _cts = new CancellationTokenSource();
         SetBusy(true, cancellable: true);
         OpenFolderButton.Visibility = Visibility.Collapsed;
@@ -233,7 +368,7 @@ public partial class MainWindow : Window
         SetThreadExecutionState(EsContinuous | EsSystemRequired);
         try
         {
-            string output = await Ffmpeg.ConvertAsync(_files, _totalSeconds, target, intro, layout,
+            string output = await Ffmpeg.ConvertAsync(_files, _totalSeconds, s.Target, s.Intro, layout, bgm, caption,
                 _platform.Key, _encoder, progress, _cts.Token);
             _lastOutputDir = System.IO.Path.GetDirectoryName(output);
             StatusText.Text = $"完成しました（{Fmt(sw.Elapsed.TotalSeconds)}）: {System.IO.Path.GetFileName(output)}";
@@ -285,11 +420,14 @@ public partial class MainWindow : Window
         bool idle = !_busy;
         AddButton.IsEnabled = idle && Ffmpeg.IsAvailable;
         ClearButton.IsEnabled = idle && _files.Count > 0;
-        PlatformPanel.IsEnabled = LengthBox.IsEnabled = IntroCheck.IsEnabled = idle;
-        IntroBox.IsEnabled = idle && IntroCheck.IsChecked == true;
-        CropRadio.IsEnabled = BlurRadio.IsEnabled = idle;
+        SettingsTabs.IsEnabled = idle; // 変換中は設定を変えられないようにする
+        IntroBox.IsEnabled = IntroCheck.IsChecked == true;
+        BgmSelectButton.IsEnabled = Ffmpeg.IsAvailable;
+        BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = _bgmFile != null;
+        CaptionBox.IsEnabled = FontBox.IsEnabled = SizeBox.IsEnabled = ColorBox.IsEnabled = PositionBox.IsEnabled
+            = TextCheck.IsChecked == true;
         StartButton.IsEnabled = idle && _encoder != null && _files.Count > 0 && _totalSeconds > 0
-                                && Validate(out _, out _) == null;
+                                && Validate(out _) == null;
     }
 
     static string Fmt(double seconds)
