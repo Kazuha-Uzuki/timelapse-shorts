@@ -20,6 +20,7 @@
         </Style>
         <Style TargetType="RadioButton" BasedOn="{StaticResource {x:Type RadioButton}}">
             <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="Padding" Value="8,3,0,0"/>
         </Style>
         <!-- 投稿先・プレビューの「最初・真ん中・最後」のボタンは、マスいっぱいに広げる -->
         <Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
@@ -27,7 +28,7 @@
         </Style>
         <!-- 設定とプレビューの枠 -->
         <Style x:Key="Section" TargetType="GroupBox" BasedOn="{StaticResource {x:Type GroupBox}}">
-            <Setter Property="Padding" Value="10,6,10,10"/>
+            <Setter Property="Padding" Value="10,4,10,4"/>
             <Setter Property="HeaderTemplate">
                 <Setter.Value>
                     <DataTemplate>
@@ -245,7 +246,7 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <ProgressBar x:Name="Bar" Height="18" Maximum="1"/>
+                <ProgressBar x:Name="Bar" Height="8" Maximum="1" Margin="0,6,0,0"/>
                 <TextBlock x:Name="StatusText" Margin="0,4,0,0" TextWrapping="Wrap"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                 <TextBlock x:Name="EncoderText" Margin="0,2,0,0" FontSize="12" TextWrapping="Wrap"
@@ -294,7 +295,7 @@
                         </UniformGrid>
                         <TextBlock x:Name="PreviewCaption" Style="{StaticResource Note}" Margin="0,2,0,0"
                                    TextAlignment="Center"/>
-                        <Button x:Name="PreviewButton" Content="プレビュー" Padding="16,6" Margin="0,8,0,0"
+                        <Button x:Name="PreviewButton" Content="プレビュー" Padding="16,6" Margin="0,8,0,0" HorizontalAlignment="Stretch"
                                 IsEnabled="False" Click="PreviewButton_Click"
                                 ToolTip="出来上がりの最初・真ん中・最後の画を、作成する前に確かめます（音は入りません）"/>
                     </StackPanel>
