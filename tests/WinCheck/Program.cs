@@ -2,9 +2,11 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using TimelapseShorts;
@@ -240,11 +242,9 @@ static class Program
         try
         {
             w.Show(); // 持ち主の画面が表示されていないと、プレビューの画面を開けない
-            w.UpdateLayout();
+            AllowLargeWindow(w);
             CheckLayout(w, 1180, 680, "標準"); // MainWindow.xaml の Width / Height
             CheckLayout(w, 960, 650, "最小");  // MainWindow.xaml の MinWidth / MinHeight
-            ((FrameworkElement)w.Content).InvalidateMeasure();
-            w.UpdateLayout();
 
             show.Invoke(w, [_previewPngs, true]);
             var preview = Current();
@@ -274,25 +274,44 @@ static class Program
     }
 
     /// <summary>
-    /// 画面の中身を、窓が width×height のときの大きさで並べ直し、切れている部品がないか・ボタンが画面に収まるかを確かめる。
-    /// （テスト用の PC は画面が 1024×768 で、窓をそれより大きくできないため、中身だけを並べ直す）
+    /// テスト用の PC（GitHub の Windows）は画面が 1024×768 で、そのままでは窓をそれより大きくできない。
+    /// 窓の大きさの上限（WM_GETMINMAXINFO の ptMaxTrackSize）を広げて、本来の大きさで確かめられるようにする。
     /// </summary>
+    static void AllowLargeWindow(Window w)
+    {
+        var source = HwndSource.FromHwnd(new WindowInteropHelper(w).Handle);
+        source.AddHook((IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
+        {
+            const int WmGetMinMaxInfo = 0x0024;
+            if (msg == WmGetMinMaxInfo)
+            {
+                Marshal.WriteInt32(lParam, 32, 4000); // MINMAXINFO.ptMaxTrackSize.x
+                Marshal.WriteInt32(lParam, 36, 4000); // MINMAXINFO.ptMaxTrackSize.y
+                handled = true;
+            }
+            return IntPtr.Zero;
+        });
+    }
+
+    /// <summary>窓を width×height にして、切れている部品がないか・ボタンが窓に収まるかを確かめる。</summary>
     static void CheckLayout(MainWindow w, double width, double height, string label)
     {
-        var client = (FrameworkElement)VisualTreeHelper.GetChild(w, 0);
-        var size = new Size(width - (w.ActualWidth - client.ActualWidth), height - (w.ActualHeight - client.ActualHeight));
+        w.Width = width;
+        w.Height = height;
+        w.UpdateLayout();
+        bool sized = Math.Abs(w.ActualWidth - width) < 1 && Math.Abs(w.ActualHeight - height) < 1;
         var root = (FrameworkElement)w.Content;
-        root.Measure(size);
-        root.Arrange(new Rect(size));
         var clipped = Descendants(root).Prepend(root)
             .Where(e => e.IsVisible && LayoutInformation.GetLayoutClip(e) != null)
             .Select(e => !string.IsNullOrEmpty(e.Name) ? e.Name : e is TextBlock t ? $"「{t.Text}」" : e.GetType().Name)
             .ToList();
         var corner = w.StartButton.TranslatePoint(new Point(w.StartButton.ActualWidth, w.StartButton.ActualHeight), root);
         bool inside = corner.X <= root.ActualWidth + 0.5 && corner.Y <= root.ActualHeight + 0.5;
-        Check($"画面の配置（{label} {width}×{height}）: 切れている所がない", clipped.Count == 0 && inside,
-            string.Join(" / ", clipped) + (inside ? "" : $" / 作成ボタンが画面の外（{corner.X:0}, {corner.Y:0}）"));
-        Shot($"main-{label}", root, size);
+        Check($"画面の配置（{label} {width}×{height}）: 切れている所がない", sized && clipped.Count == 0 && inside,
+            (sized ? "" : $"窓が {w.ActualWidth}×{w.ActualHeight} にしかならない / ") + string.Join(" / ", clipped)
+            + (inside ? "" : $" / 作成ボタンが窓の外（{corner.X:0}, {corner.Y:0}）"));
+        var client = (FrameworkElement)VisualTreeHelper.GetChild(w, 0);
+        Shot($"main-{label}", client, client.RenderSize);
     }
 
     static IEnumerable<FrameworkElement> Descendants(DependencyObject parent)
