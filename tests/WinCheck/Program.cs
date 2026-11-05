@@ -80,6 +80,19 @@ static class Program
         Refresh();
         Check("エンコーダーが無くてもプレビューはできる", w.PreviewButton.IsEnabled && !w.StartButton.IsEnabled);
         Set("_encoder", "h264_mf");
+        Check("フェードの初期値（BGM 0.5 秒・完成品 0.3 秒）", w.FadeInBox.Text == "0.5" && w.FadeOutBox.Text == "0.5"
+            && w.IntroFadeInBox.Text == "0.3" && w.IntroFadeOutBox.Text == "0.3" && w.IntroFadeInBox.IsEnabled);
+        w.IntroFadeInBox.Text = "3";
+        w.IntroFadeOutBox.Text = "2.5"; // 合計 5.5 秒は、冒頭に移す 5 秒より長い
+        Check("完成品のフェードが長すぎると作れない", w.InfoText.Text.StartsWith("完成品のフェード") && !w.StartButton.IsEnabled,
+            w.InfoText.Text);
+        w.IntroCheck.IsChecked = false;
+        Check("冒頭に移さないなら、完成品のフェードは見ない・触れない",
+            w.StartButton.IsEnabled && !w.IntroFadeInBox.IsEnabled && !w.IntroFadeOutBox.IsEnabled, w.InfoText.Text);
+        w.IntroCheck.IsChecked = true;
+        w.IntroFadeInBox.Text = "0.3";
+        w.IntroFadeOutBox.Text = "０．３"; // 全角でも読める
+        Check("完成品のフェード（全角）", w.StartButton.IsEnabled, w.InfoText.Text);
 
         w.TextCheck.IsChecked = true;
         Check("テキストが空なら作れない", w.InfoText.Text == "入れるテキストを入力してください" && !w.StartButton.IsEnabled
@@ -147,6 +160,19 @@ static class Program
         // 文字なし（比べる基準）
         string plain = await ConvertAsync(video, total, encoder, "plain", null, null);
         string plainHash = await FrameHashAsync(plain);
+
+        // 完成品を冒頭に（1秒＝30コマ）＋フェード 0.3 秒（9コマ）: 最初は黒から明るく、完成品の終わりで暗くなり、
+        // 本編（30コマ目から）は元の明るさ。フェード 0 なら最初から明るい
+        var faded = await LumaAsync(await ConvertAsync(video, total, encoder, "introfade", null, null, intro: 1,
+            introFadeIn: 0.3, introFadeOut: 0.3));
+        var unfaded = await LumaAsync(await ConvertAsync(video, total, encoder, "intronofade", null, null, intro: 1));
+        double bright = faded.Count > 30 ? faded[15] : double.NaN;
+        Check("完成品のフェード: 黒から出てきて、黒に消えてから本編",
+            faded.Count >= 150 && faded[0] < 30 && faded[4] < bright && bright > 60 && faded[29] < bright * 0.5
+            && faded[30] > bright * 0.8 && faded.Skip(30).All(y => y > 40),
+            string.Join(" ", new[] { 0, 4, 8, 15, 21, 29, 30, 60 }.Where(i => i < faded.Count).Select(i => $"{i}:{faded[i]:0}")));
+        Check("完成品のフェード 0 秒: 最初から明るい", unfaded.Count >= 150 && unfaded[0] > 60 && unfaded[29] > 60,
+            string.Join(" ", new[] { 0, 29, 30 }.Where(i => i < unfaded.Count).Select(i => $"{i}:{unfaded[i]:0}")));
 
         // 保存先を決まったフォルダにすると、元の動画の横ではなくそこに作る
         string outDir = Path.Combine(work, "保存先 フォルダ");
@@ -345,6 +371,7 @@ static class Program
             ((RadioButton)w.PlatformPanel.Children[2]).IsChecked = true; // TikTok
             w.LengthBox.Text = "4:30";
             w.IntroBox.Text = "7";
+            w.IntroFadeInBox.Text = "0.5";
             w.BlurRadio.IsChecked = true;
             w.FadeInBox.Text = "2";
             w.VolumeSlider.Value = -4;
@@ -404,6 +431,7 @@ static class Program
         Check("前回の設定に戻る",
             w.PlatformPanel.Children.OfType<RadioButton>().ElementAt(2).IsChecked == true && w.LengthBox.Text == "4:30"
             && w.IntroCheck.IsChecked == true && w.IntroBox.Text == "7" && w.BlurRadio.IsChecked == true
+            && w.IntroFadeInBox.Text == "0.5" && w.IntroFadeOutBox.Text == "０．３"
             && w.FadeInBox.Text == "2" && w.FadeOutBox.Text == "３" && w.VolumeSlider.Value == -4
             && w.FontBox.SelectedItem?.ToString() == font && w.ColorBox.SelectedIndex == 2 && w.PositionBox.SelectedIndex == 2
             && w.BackBoxRadio.IsChecked == true && w.SizeBox.Text == "100",
@@ -477,9 +505,12 @@ static class Program
             .ToList();
         var corner = w.StartButton.TranslatePoint(new Point(w.StartButton.ActualWidth, w.StartButton.ActualHeight), root);
         bool inside = corner.X <= root.ActualWidth + 0.5 && corner.Y <= root.ActualHeight + 0.5;
+        static double Need(GroupBox g) => ((FrameworkElement)g.Content).DesiredSize.Height;
         Check($"画面の配置（{label} {width}×{height}）: 切れている所がない", sized && clipped.Count == 0 && inside,
             (sized ? "" : $"窓が {w.ActualWidth}×{w.ActualHeight} にしかならない / ") + string.Join(" / ", clipped)
-            + (inside ? "" : $" / 作成ボタンが窓の外（{corner.X:0}, {corner.Y:0}）"));
+            + (inside ? "" : $" / 作成ボタンが窓の外（{corner.X:0}, {corner.Y:0}）")
+            + $" [一覧の高さ {w.FilesList.ActualHeight:0} / 中身の高さ 長さ {Need(w.LengthSection):0}・BGM {Need(w.BgmSection):0}"
+            + $"・テキスト {Need(w.TextSection):0}]");
         // プレビューの枠は出来上がりと同じ 9:16 で、画が枠いっぱいに出る（黒い余白がない）
         var frame = w.PreviewFrame;
         var bottom = w.PreviewButton.TranslatePoint(new Point(0, w.PreviewButton.ActualHeight), root);
@@ -524,9 +555,19 @@ static class Program
 
     /// <summary>30秒の動画を5秒のタイムラプスにする（アプリと同じ処理）。</summary>
     static Task<string> ConvertAsync(string video, double total, string encoder, string suffix,
-        Ffmpeg.Bgm? bgm, Ffmpeg.Caption? caption, double intro = 0, string? outputDir = null) =>
+        Ffmpeg.Bgm? bgm, Ffmpeg.Caption? caption, double intro = 0, string? outputDir = null,
+        double introFadeIn = 0, double introFadeOut = 0) =>
         Ffmpeg.ConvertAsync([video], total, 5, intro, Ffmpeg.Layout.Crop, bgm, caption, suffix, encoder,
-            new Progress<Ffmpeg.Progress>(_ => { }), CancellationToken.None, outputDir);
+            new Progress<Ffmpeg.Progress>(_ => { }), CancellationToken.None, outputDir, introFadeIn, introFadeOut);
+
+    /// <summary>各コマの明るさ（Y の平均。黒が 16 くらい）を、はじめから順に。</summary>
+    static async Task<List<double>> LumaAsync(string video) =>
+        System.Text.RegularExpressions.Regex.Matches(
+                await RunAsync(Ffmpeg.FfmpegPath, "-hide_banner", "-loglevel", "error", "-i", video,
+                    "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-f", "null", "-"),
+                @"YAVG=([0-9.]+)")
+            .Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture))
+            .ToList();
 
     /// <summary>真ん中あたり（75コマ目）の画像のハッシュ。</summary>
     static async Task<string> FrameHashAsync(string video) =>

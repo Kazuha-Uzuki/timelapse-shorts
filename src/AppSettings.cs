@@ -14,9 +14,11 @@ public sealed class AppSettings
     public string? Length { get; set; }            // 総尺（「2:59」など）
     public bool Intro { get; set; } = true;
     public string IntroSeconds { get; set; } = "5";
+    public string IntroFadeIn { get; set; } = "0.3";  // 冒頭に移した完成品の部分のフェード（秒）
+    public string IntroFadeOut { get; set; } = "0.3";
     public bool Blur { get; set; }                 // 横向きの動画: true = ぼかし背景 / false = 中央を切り抜く
-    public string FadeIn { get; set; } = "1";
-    public string FadeOut { get; set; } = "3";
+    public string FadeIn { get; set; } = "0.5";       // BGM のフェード（秒）
+    public string FadeOut { get; set; } = "0.5";
     public double Volume { get; set; }
     public string? Font { get; set; }              // フォントの表示名
     public string? Color { get; set; }             // 色のセットの名前

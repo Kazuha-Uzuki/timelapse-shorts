@@ -143,11 +143,13 @@ public static class Ffmpeg
     /// introSeconds が 0 より大きければ、タイムラプスの最後の introSeconds 秒（完成品）を冒頭に移動する。
     /// bgm / caption があれば、BGM と文字を入れる。作ったファイルのパスを返す。
     /// outputDir が null なら、1本目の動画と同じフォルダに作る。
+    /// introFadeIn / introFadeOut は、冒頭に移した完成品の部分のフェード（秒。0 でなし）。
     /// </summary>
     public static async Task<string> ConvertAsync(
         IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds, double introSeconds,
         Layout layout, Bgm? bgm, Caption? caption, string suffix, string encoder,
-        IProgress<Progress> progress, CancellationToken ct, string? outputDir = null)
+        IProgress<Progress> progress, CancellationToken ct, string? outputDir = null,
+        double introFadeIn = 0, double introFadeOut = 0)
     {
         if (introSeconds > 0 && totalSeconds - introSeconds * Math.Max(1, totalSeconds / targetSeconds) <= 0)
             throw new ArgumentOutOfRangeException(nameof(introSeconds), "冒頭に移動する秒数が総尺以上です");
@@ -158,7 +160,7 @@ public static class Ffmpeg
         try
         {
             return await ConvertInAsync(work, inputs, totalSeconds, targetSeconds, introSeconds, layout, bgm, caption,
-                suffix, encoder, progress, ct, outputDir);
+                suffix, encoder, progress, ct, outputDir, introFadeIn, introFadeOut);
         }
         finally
         {
@@ -169,7 +171,7 @@ public static class Ffmpeg
     static async Task<string> ConvertInAsync(string work,
         IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds, double introSeconds,
         Layout layout, Bgm? bgm, Caption? caption, string suffix, string encoder,
-        IProgress<Progress> progress, CancellationToken ct, string? outputDir)
+        IProgress<Progress> progress, CancellationToken ct, string? outputDir, double introFadeIn, double introFadeOut)
     {
         string first = inputs[0];
         double factor = Math.Max(1, totalSeconds / targetSeconds);       // 何倍速にするか
@@ -199,7 +201,8 @@ public static class Ffmpeg
             args.AddRange([.. skip, "-ss", Sec(local), .. tail]);
             args.AddRange([.. skip, "-t", Sec(cut), .. source]);
             int introFrames = (int)Math.Round(introSeconds * OutputFps);
-            chain = $"[0:v]{pick},trim=end_frame={introFrames}[end];[1:v]{pick}[main];[end][main]concat=n=2:v=1:a=0";
+            chain = $"[0:v]{pick},trim=end_frame={introFrames}{IntroFades(introFrames, introFadeIn, introFadeOut)}[end];" +
+                    $"[1:v]{pick}[main];[end][main]concat=n=2:v=1:a=0";
         }
         else
         {
@@ -235,6 +238,18 @@ public static class Ffmpeg
         string stage = keyframesOnly ? "変換中（高速モード）" : "変換中";
         await RunWithProgressAsync(args, seconds, stage, progress, output, work, ct);
         return output;
+    }
+
+    /// <summary>
+    /// 完成品の部分（frames コマ）のフェード。黒から出てきて、黒に消えてから本編につなぐ。コマ数で指定するので
+    /// 本編には かからない（fade の out は、そのあとのコマも全部黒にするため、つなぐ前のこの部分だけにかける）。
+    /// 文字はこのあとで動画全体に描くので、フェード中も消えない。
+    /// </summary>
+    static string IntroFades(int frames, double fadeIn, double fadeOut)
+    {
+        int fin = Math.Min(frames, (int)Math.Round(fadeIn * OutputFps));
+        int fout = Math.Min(frames, (int)Math.Round(fadeOut * OutputFps));
+        return (fin > 0 ? $",fade=t=in:s=0:n={fin}" : "") + (fout > 0 ? $",fade=t=out:s={frames - fout}:n={fout}" : "");
     }
 
     static async Task<List<double>> DurationsAsync(IReadOnlyList<string> inputs)

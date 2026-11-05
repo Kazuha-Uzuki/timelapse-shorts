@@ -35,7 +35,7 @@ public partial class MainWindow : Window
     static readonly string[] Positions = ["上", "中央", "下"]; // Ffmpeg.TextPosition と同じ並び
 
     /// <summary>入力欄から読み取った設定。</summary>
-    sealed record Settings(int Target, int Intro, double FadeIn, double FadeOut, int TextSize);
+    sealed record Settings(int Target, int Intro, double IntroFadeIn, double IntroFadeOut, double FadeIn, double FadeOut, int TextSize);
 
     /// <summary>投稿先。MaxSeconds は各サービスの上限（2026年10月時点）。</summary>
     sealed record Platform(string Key, string Name, int MaxSeconds, string Note)
@@ -101,7 +101,7 @@ public partial class MainWindow : Window
                 GroupName = "Platform",
                 Tag = p,
                 Margin = new Thickness(3),
-                Padding = new Thickness(4, 6, 4, 6),
+                Padding = new Thickness(4, 3, 4, 3),
                 Content = new TextBlock
                 {
                     Text = $"{p.Name}\n最大 {Fmt(p.MaxSeconds)}",
@@ -139,6 +139,8 @@ public partial class MainWindow : Window
         }
         IntroCheck.IsChecked = a.Intro;
         IntroBox.Text = a.IntroSeconds;
+        IntroFadeInBox.Text = a.IntroFadeIn;
+        IntroFadeOutBox.Text = a.IntroFadeOut;
         (a.Blur ? BlurRadio : CropRadio).IsChecked = true;
         FadeInBox.Text = a.FadeIn;
         FadeOutBox.Text = a.FadeOut;
@@ -158,6 +160,8 @@ public partial class MainWindow : Window
         a.Length = LengthBox.Text;
         a.Intro = IntroCheck.IsChecked == true;
         a.IntroSeconds = IntroBox.Text;
+        a.IntroFadeIn = IntroFadeInBox.Text;
+        a.IntroFadeOut = IntroFadeOutBox.Text;
         a.Blur = BlurRadio.IsChecked == true;
         a.FadeIn = FadeInBox.Text;
         a.FadeOut = FadeOutBox.Text;
@@ -391,13 +395,18 @@ public partial class MainWindow : Window
     /// <summary>入力欄を確かめて設定を返す。問題があればその説明を返す。</summary>
     string? Validate(out Settings settings)
     {
-        settings = new Settings(0, 0, 0, 0, 0);
+        settings = new Settings(0, 0, 0, 0, 0, 0, 0);
         if (!TryParseSeconds(LengthBox.Text, out int target) || target < 1 || target > _platform.MaxSeconds)
             return $"総尺は 0:01〜{Fmt(_platform.MaxSeconds)} の間で入力してください（例: {Fmt(_platform.DefaultSeconds)}）";
         double length = _totalSeconds > 0 ? Math.Min(_totalSeconds, target) : target; // 出来上がりの長さ
         int intro = 0;
         if (IntroCheck.IsChecked == true && (!TryParseSeconds(IntroBox.Text, out intro) || intro < 1 || intro >= length))
             return "冒頭に移動する秒数は、1秒以上で総尺より短くしてください";
+        double introIn = 0, introOut = 0;
+        if (IntroCheck.IsChecked == true && (!TryParseNumber(IntroFadeInBox.Text, out introIn)
+                                             || !TryParseNumber(IntroFadeOutBox.Text, out introOut)
+                                             || introIn < 0 || introOut < 0 || introIn + introOut > intro))
+            return "完成品のフェードの秒数は 0 以上で、イン・アウトの合計を冒頭に移す秒数以内にしてください";
         double fadeIn = 0, fadeOut = 0;
         if (_bgmFile != null && (!TryParseNumber(FadeInBox.Text, out fadeIn) || !TryParseNumber(FadeOutBox.Text, out fadeOut)
                                  || fadeIn < 0 || fadeOut < 0 || fadeIn + fadeOut > length))
@@ -409,7 +418,7 @@ public partial class MainWindow : Window
             if (!TryParseSeconds(SizeBox.Text, out size) || size < 20 || size > 400) return "文字の大きさは 20〜400 にしてください";
             if (FontBox.SelectedItem == null) return "フォントを選んでください";
         }
-        settings = new Settings(target, intro, fadeIn, fadeOut, size);
+        settings = new Settings(target, intro, introIn, introOut, fadeIn, fadeOut, size);
         return null;
     }
 
@@ -516,7 +525,7 @@ public partial class MainWindow : Window
         try
         {
             string output = await Ffmpeg.ConvertAsync(_files, _totalSeconds, s.Target, s.Intro, layout, bgm, caption,
-                _platform.Key, _encoder, progress, _cts.Token, outputDir);
+                _platform.Key, _encoder, progress, _cts.Token, outputDir, s.IntroFadeIn, s.IntroFadeOut);
             _lastOutput = output;
             StatusText.Text = $"完成しました（{Fmt(sw.Elapsed.TotalSeconds)}）: {System.IO.Path.GetFileName(output)}";
             OpenFolderButton.Visibility = Visibility.Visible;
@@ -674,7 +683,7 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>画の見た目に関わる設定をまとめた文字列（BGM は画に関係ないので含めない）。</summary>
+    /// <summary>画の見た目に関わる設定をまとめた文字列（BGM と完成品のフェードは静止画に出ないので含めない）。</summary>
     string PreviewKey() => string.Join("|", string.Join(";", _files), LengthBox.Text, IntroCheck.IsChecked, IntroBox.Text,
         BlurRadio.IsChecked, TextCheck.IsChecked, CaptionBox.Text, FontBox.SelectedIndex, ColorBox.SelectedIndex,
         BackBoxRadio.IsChecked, SizeBox.Text, PositionBox.SelectedIndex);
@@ -719,7 +728,7 @@ public partial class MainWindow : Window
         AddButton.IsEnabled = idle && Ffmpeg.IsAvailable;
         ClearButton.IsEnabled = idle && _files.Count > 0;
         SettingsPanel.IsEnabled = idle; // 変換中は設定を変えられないようにする
-        IntroBox.IsEnabled = IntroCheck.IsChecked == true;
+        IntroBox.IsEnabled = IntroFadeInBox.IsEnabled = IntroFadeOutBox.IsEnabled = IntroCheck.IsChecked == true;
         BgmSelectButton.IsEnabled = Ffmpeg.IsAvailable;
         BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = VolumeSlider.IsEnabled = _bgmFile != null;
         CaptionBox.IsEnabled = FontBox.IsEnabled = SizeBox.IsEnabled = ColorBox.IsEnabled = PositionBox.IsEnabled

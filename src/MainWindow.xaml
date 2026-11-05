@@ -95,24 +95,35 @@
                     <TextBlock Text="投稿先" FontWeight="SemiBold"/>
                     <!-- 投稿先ボタンは MainWindow.xaml.cs で作る（最大の長さも表示） -->
                     <UniformGrid x:Name="PlatformPanel" Columns="2" Margin="-3,2,-3,0"/>
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                         <TextBlock Text="総尺" VerticalAlignment="Center"/>
                         <TextBox x:Name="LengthBox" Width="64" Margin="8,0,0,0" Padding="2"
                                  VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
                     </StackPanel>
-                    <TextBlock x:Name="LengthHint" Style="{StaticResource Note}" Margin="0,3,0,0"/>
-                    <WrapPanel Margin="0,12,0,0">
+                    <TextBlock x:Name="LengthHint" Style="{StaticResource Note}" Margin="0,2,0,0"/>
+                    <WrapPanel Margin="0,8,0,0">
                         <CheckBox x:Name="IntroCheck" Content="完成品を冒頭に：最後の" IsChecked="True" VerticalAlignment="Center"
                                   Checked="Settings_Changed" Unchecked="Settings_Changed"/>
                         <TextBox x:Name="IntroBox" Text="5" Width="40" Margin="6,0" Padding="2"
                                  VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
                         <TextBlock Text="秒を移す" VerticalAlignment="Center"/>
                     </WrapPanel>
-                    <TextBlock Text="横向きで撮った動画の場合" FontWeight="SemiBold" Margin="0,12,0,4"/>
-                    <RadioButton x:Name="CropRadio" IsChecked="True" Margin="0,0,0,2" Checked="Settings_Changed">
+                    <!-- 冒頭に移した完成品の部分だけのフェード（黒から出てきて、黒に消えてから本編につなぐ）。0 秒でなし。
+                         左はチェックボックスの文字の位置にそろえる -->
+                    <WrapPanel Margin="28,2,0,0">
+                        <TextBlock Text="フェード イン" VerticalAlignment="Center"/>
+                        <TextBox x:Name="IntroFadeInBox" Text="0.3" Width="40" Margin="4,0" Padding="2"
+                                 VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
+                        <TextBlock Text="アウト" VerticalAlignment="Center"/>
+                        <TextBox x:Name="IntroFadeOutBox" Text="0.3" Width="40" Margin="4,0" Padding="2"
+                                 VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
+                        <TextBlock Text="秒" VerticalAlignment="Center"/>
+                    </WrapPanel>
+                    <TextBlock Text="横向きで撮った動画の場合" FontWeight="SemiBold" Margin="0,8,0,2"/>
+                    <RadioButton x:Name="CropRadio" IsChecked="True" Checked="Settings_Changed">
                         <TextBlock Text="中央を切り抜く（左右が切れる）" TextWrapping="Wrap"/>
                     </RadioButton>
-                    <RadioButton x:Name="BlurRadio" Margin="0,2,0,0" Checked="Settings_Changed">
+                    <RadioButton x:Name="BlurRadio" Checked="Settings_Changed">
                         <TextBlock Text="全体を残す（上下はぼかした背景）" TextWrapping="Wrap"/>
                     </RadioButton>
                 </StackPanel>
@@ -130,13 +141,13 @@
                     <WrapPanel Margin="0,10,0,0">
                         <StackPanel Orientation="Horizontal" Margin="0,0,16,4">
                             <TextBlock Text="フェードイン" VerticalAlignment="Center"/>
-                            <TextBox x:Name="FadeInBox" Text="1" Width="40" Margin="6,0" Padding="2"
+                            <TextBox x:Name="FadeInBox" Text="0.5" Width="40" Margin="6,0" Padding="2"
                                      VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
                             <TextBlock Text="秒" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                             <TextBlock Text="フェードアウト" VerticalAlignment="Center"/>
-                            <TextBox x:Name="FadeOutBox" Text="3" Width="40" Margin="6,0" Padding="2"
+                            <TextBox x:Name="FadeOutBox" Text="0.5" Width="40" Margin="6,0" Padding="2"
                                      VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
                             <TextBlock Text="秒" VerticalAlignment="Center"/>
                         </StackPanel>
