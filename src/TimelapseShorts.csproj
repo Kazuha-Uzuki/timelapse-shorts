@@ -11,6 +11,8 @@
     <AssemblyName>TimelapseShorts</AssemblyName>
     <Product>タイムラプス縦動画メーカー</Product>
     <Version>1.0.0</Version>
+    <!-- ダークモードに使う ThemeMode（Fluent テーマ）は .NET 10 では試験的な扱い。分かったうえで使う -->
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>
 
 </Project>

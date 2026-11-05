@@ -32,6 +32,12 @@ static class Program
     static int Main()
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
+        // テーマ（ThemeMode）はアプリに付くので、本物と同じように Application を作っておく。
+        // 窓を閉じても終わらないようにする（あとで設定の復元を確かめるため、もう一度窓を作る）
+        _ = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        // 前回の設定は、このテスト専用の場所に書く（最初は無い＝初めての起動）
+        AppSettings.FilePath = Path.Combine(Path.GetTempPath(), $"wincheck-settings-{Environment.ProcessId}.json");
+        File.Delete(AppSettings.FilePath);
         CheckWindow(); // 画面は STA のこのスレッドで作る必要があるので、先に同期で確かめる
         // 変換のテストは別のスレッドで（画面を作ったスレッドで待つと止まることがあるため）
         Task.Run(() => RunAsync()).GetAwaiter().GetResult();
@@ -275,20 +281,94 @@ static class Program
             Check("プレビュー欄: BGM の音量では古くならない", !w.PreviewStale.IsVisible);
             w.VolumeSlider.Value = -6;
 
+            SettingsWindow.ApplyTheme("Light"); // CI の Windows の色に左右されないよう、まずライトで確かめる
+            Check("ライト: 背景が明るい", Luminance(w.Background) > 0.8, $"{w.Background}");
             CheckLayout(w, 1480, 720, "標準"); // MainWindow.xaml の Width / Height
             CheckLayout(w, 1240, 650, "最小"); // MainWindow.xaml の MinWidth / MinHeight
             CheckLayout(w, 1920, 1030, "最大化"); // フルHDの画面いっぱい（プレビューが大きくなる）
 
+            // 設定画面からダークにする（実際の操作と同じ道すじで、設定にも「Dark」が入る）
+            var settings = new SettingsWindow((AppSettings)typeof(MainWindow).GetField("_settings", F)!.GetValue(w)!) { Owner = w };
+            settings.Show();
+            Check("設定画面: 最初は「Windows に合わせる」", settings.SystemRadio.IsChecked == true);
+            settings.DarkRadio.IsChecked = true;
+            settings.UpdateLayout();
+            w.UpdateLayout();
+            Check("ダーク: 背景が暗く、文字が明るい", Luminance(w.Background) < 0.2 && Luminance(w.Foreground) > 0.8
+                                                && Luminance(w.LengthHint.Foreground) > 0.5,
+                $"背景 {w.Background} / 文字 {w.Foreground} / 補足 {w.LengthHint.Foreground}");
+            Check("ダーク: ボタンや入力欄も暗い", Luminance(w.LengthBox.Background) < 0.3 && Luminance(w.StartButton.Background) < 0.3,
+                $"入力欄 {w.LengthBox.Background} / ボタン {w.StartButton.Background}");
+            var settingsClient = (FrameworkElement)VisualTreeHelper.GetChild(settings, 0);
+            Shot("settings-dark", settingsClient, settingsClient.RenderSize);
+            settings.Close();
+            CheckLayout(w, 1480, 720, "ダーク標準");
+            CheckLayout(w, 1240, 650, "ダーク最小");
+
+            // 次の起動で戻るか確かめるため、最初とは違う値にしておく
+            ((RadioButton)w.PlatformPanel.Children[2]).IsChecked = true; // TikTok
+            w.LengthBox.Text = "4:30";
+            w.IntroBox.Text = "7";
+            w.BlurRadio.IsChecked = true;
+            w.FadeInBox.Text = "2";
+            w.VolumeSlider.Value = -4;
+            w.FontBox.SelectedIndex = 1;
+            w.ColorBox.SelectedIndex = 2;
+            w.PositionBox.SelectedIndex = 2;
+            w.BackBoxRadio.IsChecked = true;
+            w.SizeBox.Text = "100";
+
             typeof(MainWindow).GetMethod("ClearButton_Click", F)!.Invoke(w, [w.ClearButton, new RoutedEventArgs()]);
             Check("動画をクリアするとプレビューも消える", w.PreviewImage.Source == null && w.PreviewPlaceholder.IsVisible
                                                     && !w.PreviewStale.IsVisible);
-            w.Close();
+            string font = w.FontBox.SelectedItem!.ToString()!;
+            w.Close(); // 閉じるときに設定を書く
+            CheckRestore(font);
         }
         catch (Exception ex)
         {
             Check("プレビュー欄", false, ex.ToString());
         }
     }
+
+    /// <summary>閉じたときの設定が、次に開いた画面に戻るか。設定のファイルが壊れていても開けるか。</summary>
+    static void CheckRestore(string font)
+    {
+        Check("設定を書いた", File.Exists(AppSettings.FilePath));
+        var w = new MainWindow();
+        Check("前回の設定に戻る",
+            w.PlatformPanel.Children.OfType<RadioButton>().ElementAt(2).IsChecked == true && w.LengthBox.Text == "4:30"
+            && w.IntroCheck.IsChecked == true && w.IntroBox.Text == "7" && w.BlurRadio.IsChecked == true
+            && w.FadeInBox.Text == "2" && w.FadeOutBox.Text == "3" && w.VolumeSlider.Value == -4
+            && w.FontBox.SelectedItem?.ToString() == font && w.ColorBox.SelectedIndex == 2 && w.PositionBox.SelectedIndex == 2
+            && w.BackBoxRadio.IsChecked == true && w.SizeBox.Text == "100",
+            File.ReadAllText(AppSettings.FilePath).ReplaceLineEndings(" "));
+        Check("前回の色（ダーク）で開く", Application.Current.ThemeMode == ThemeMode.Dark && Luminance(w.Background) < 0.2,
+            $"{Application.Current.ThemeMode}");
+        w.Close();
+
+        File.WriteAllText(AppSettings.FilePath, "{ こわれた");
+        try
+        {
+            w = new MainWindow();
+            Check("設定のファイルが壊れていても開ける（最初の設定になる）", w.LengthBox.Text == "2:59" && w.CropRadio.IsChecked == true,
+                w.LengthBox.Text);
+            w.Close();
+        }
+        catch (Exception ex)
+        {
+            Check("設定のファイルが壊れていても開ける（最初の設定になる）", false, ex.ToString());
+        }
+        File.Delete(AppSettings.FilePath);
+    }
+
+    /// <summary>
+    /// 単色のブラシの明るさ（0〜1）。Fluent の色は半透明が多いので、透けている分は黒の上に重ねたとして数える。
+    /// 単色でなければ NaN（比べると必ず NG になる）。
+    /// </summary>
+    static double Luminance(Brush? brush) => brush is SolidColorBrush { Color: var c }
+        ? (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255 * c.A / 255 * brush.Opacity
+        : double.NaN;
 
     /// <summary>
     /// テスト用の PC（GitHub の Windows）は画面が 1024×768 で、そのままでは窓をそれより大きくできない。

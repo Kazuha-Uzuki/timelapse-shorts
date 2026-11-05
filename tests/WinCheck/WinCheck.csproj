@@ -8,14 +8,18 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="../../src/Ffmpeg.cs" />
     <Compile Include="../../src/FontCatalog.cs" />
+    <Compile Include="../../src/AppSettings.cs" />
     <!-- 画面も実際に作って、起動時に落ちないことと入力チェックを確かめる -->
     <Page Include="../../src/MainWindow.xaml" Link="MainWindow.xaml" />
     <Compile Include="../../src/MainWindow.xaml.cs" Link="MainWindow.xaml.cs" />
+    <Page Include="../../src/SettingsWindow.xaml" Link="SettingsWindow.xaml" />
+    <Compile Include="../../src/SettingsWindow.xaml.cs" Link="SettingsWindow.xaml.cs" />
   </ItemGroup>
 
 </Project>

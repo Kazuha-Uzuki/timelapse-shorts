@@ -67,6 +67,7 @@ public partial class MainWindow : Window
     List<Ffmpeg.PreviewFrame>? _previewFrames; // プレビュー欄の画（最初・真ん中・最後）。作っていなければ null
     bool _previewIntro;                         // その画を作ったとき、完成品を冒頭に移していたか
     string? _previewKey;                        // その画を作ったときの設定（変わったら「古い」と知らせる）
+    readonly AppSettings _settings = AppSettings.Load(); // 前回の設定（閉じるときに今の設定を書く）
 
     // 変換中にPCがスリープして処理が止まるのを防ぐ（画面が消えるのは構わない）
     [DllImport("kernel32.dll")]
@@ -75,6 +76,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        SettingsWindow.ApplyTheme(_settings.Theme); // 部品を作る前に色を決めておく
         InitializeComponent();
         // 画面の小さいノートPCでもはみ出さないよう、作業領域（タスクバーを除いた広さ）に収める
         var area = SystemParameters.WorkArea;
@@ -84,7 +86,6 @@ public partial class MainWindow : Window
         MinHeight = Math.Min(MinHeight, Height);
 
         // 投稿先ボタン（押した状態が残り、1つだけ選べる）
-        var toggleStyle = TryFindResource(typeof(ToggleButton)) as Style;
         foreach (var p in Platforms)
         {
             var button = new RadioButton
@@ -100,7 +101,7 @@ public partial class MainWindow : Window
                     TextWrapping = TextWrapping.Wrap,
                 },
             };
-            if (toggleStyle != null) button.Style = toggleStyle;
+            button.SetResourceReference(StyleProperty, typeof(ToggleButton)); // テーマを変えたら見た目も変わる
             button.Checked += Platform_Checked;
             PlatformPanel.Children.Add(button);
         }
@@ -116,6 +117,55 @@ public partial class MainWindow : Window
 
         _ready = true;
         ((RadioButton)PlatformPanel.Children[0]).IsChecked = true;
+        RestoreSettings();
+    }
+
+    /// <summary>前回閉じたときの設定に戻す。見つからない値（消したフォントなど）は最初の値のまま。</summary>
+    void RestoreSettings()
+    {
+        var a = _settings;
+        if (PlatformPanel.Children.OfType<RadioButton>().FirstOrDefault(b => ((Platform)b.Tag).Key == a.Platform) is { } button)
+        {
+            button.IsChecked = true;
+            if (a.Length != null) LengthBox.Text = a.Length; // 投稿先を選ぶと総尺が初期値になるので、そのあとで戻す
+        }
+        IntroCheck.IsChecked = a.Intro;
+        IntroBox.Text = a.IntroSeconds;
+        (a.Blur ? BlurRadio : CropRadio).IsChecked = true;
+        FadeInBox.Text = a.FadeIn;
+        FadeOutBox.Text = a.FadeOut;
+        VolumeSlider.Value = Math.Clamp(a.Volume, VolumeSlider.Minimum, VolumeSlider.Maximum);
+        if (FontBox.Items.OfType<FontCatalog.Item>().FirstOrDefault(f => f.Display == a.Font) is { } font) FontBox.SelectedItem = font;
+        if (ColorPresets.FirstOrDefault(c => c.Name == a.Color) is { } color) ColorBox.SelectedItem = color;
+        PositionBox.SelectedIndex = Math.Clamp(a.Position, 0, Positions.Length - 1);
+        (a.TextBack ? BackBoxRadio : BackNoneRadio).IsChecked = true;
+        SizeBox.Text = a.TextSize;
+    }
+
+    /// <summary>今の設定を、次の起動のために書いておく。</summary>
+    void SaveSettings()
+    {
+        var a = _settings;
+        a.Platform = _platform.Key;
+        a.Length = LengthBox.Text;
+        a.Intro = IntroCheck.IsChecked == true;
+        a.IntroSeconds = IntroBox.Text;
+        a.Blur = BlurRadio.IsChecked == true;
+        a.FadeIn = FadeInBox.Text;
+        a.FadeOut = FadeOutBox.Text;
+        a.Volume = VolumeSlider.Value;
+        a.Font = (FontBox.SelectedItem as FontCatalog.Item)?.Display;
+        a.Color = (ColorBox.SelectedItem as ColorPreset)?.Name;
+        a.Position = PositionBox.SelectedIndex;
+        a.TextBack = BackBoxRadio.IsChecked == true;
+        a.TextSize = SizeBox.Text;
+        a.Save();
+    }
+
+    void SettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        new SettingsWindow(_settings) { Owner = this }.ShowDialog();
+        _settings.Save(); // 色を変えたらすぐ覚える（このあと落ちても次は同じ色で開く）
     }
 
     async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -603,6 +653,7 @@ public partial class MainWindow : Window
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         _cts?.Cancel(); // 変換中に閉じたら ffmpeg も止める
+        SaveSettings();
         base.OnClosing(e);
     }
 

@@ -10,6 +10,8 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 | `src/Ffmpeg.cs` | 変換ロジック（エンコーダー検出・間引き・冒頭移動・HDR・縦長化・BGM・文字入れ・プレビュー）。WPF に依存しない |
 | `src/FontCatalog.cs` | フォント一覧と、libass に渡すフォントファイル・ファミリー名の解決（WPF） |
 | `src/MainWindow.xaml(.cs)` | 画面。投稿先の上限は `Platforms`（2026年10月時点の値） |
+| `src/SettingsWindow.xaml(.cs)` | 「設定」の小さな画面（画面の色）と、テーマを切り替える `ApplyTheme` |
+| `src/AppSettings.cs` | 前回の設定（`%LOCALAPPDATA%\TimelapseShorts\settings.json`）。閉じるときと設定画面を閉じたときに書く |
 | `tests/WinCheck` | CI の Windows で、画面と変換を実際に動かして確かめるテスト |
 | `.github/workflows/build.yml` | exe ビルド、LGPL 版 FFmpeg と Google Fonts の同梱、WinCheck、zip 化、Release への添付 |
 | `使い方.txt` | 利用者向けの説明。zip には `README.txt` として入る（日本語のファイル名は解凍ソフトで文字化けするため） |
@@ -50,4 +52,8 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 - エンコーダー: h264_nvenc → h264_qsv → h264_amf → h264_mf → libopenh264 の順に1コマ試し書きして選ぶ（LGPL 版 FFmpeg に libx264 は無い）。
 - 同梱物: FFmpeg は BtbN の LGPL 版（安定版の最新を自動で選ぶ）。Google Fonts は google/fonts の commit `bbda7253fc363238b05d97515ca71f8ae49c4fa9` に固定した 9 書体と、その OFL。ライセンス文が配られていない書体は入れない。
 - 画面: 横並びの 3 列（長さ・構成 / BGM / テキスト）と、右のプレビュー欄。プレビュー枠は 9:16 で、欄の幅は高さに合わせて変える（左の設定は 890 より狭くしない）。起動時に作業領域に収める。1280×720（150% 表示のノート PC）の画面にも収まること。
+- 色（ダークモード）: .NET 10 の Fluent テーマ（`Application.ThemeMode`、試験的な機能なので csproj で WPF0001 を抑えている）。
+  色は直接書かず `{DynamicResource TextFillColorSecondaryBrush}` などテーマの色を使う（プレビュー枠の黒と音量バーの緑・赤だけは固定）。
+  自分で作る Style は `BasedOn="{StaticResource {x:Type …}}"` にする（付けないと Fluent の見た目にならない）。
+  窓の背景は `ApplicationBackgroundBrush` を明示している（Fluent の既定は透明＝Mica）。
 - WinCheck: CI の画面は 1024×768 なので、窓をそれより大きくするために `WM_GETMINMAXINFO` と WPF の `_trackMaxWidthDeviceUnits` などを広げている。

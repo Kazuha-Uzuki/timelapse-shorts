@@ -4,10 +4,13 @@
         Title="タイムラプス縦動画メーカー" Width="1480" Height="720" MinWidth="1240" MinHeight="650"
         WindowStartupLocation="CenterScreen" AllowDrop="True"
         DragOver="Window_DragOver" Drop="Window_Drop" Loaded="Window_Loaded"
-        FontFamily="Yu Gothic UI" FontSize="14">
+        FontFamily="Yu Gothic UI" FontSize="14"
+        Background="{DynamicResource ApplicationBackgroundBrush}"
+        Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+    <!-- 色はテーマ（ライト／ダーク）の色を使う。テーマは SettingsWindow.ApplyTheme で切り替える -->
     <Window.Resources>
         <!-- 設定とプレビューの枠 -->
-        <Style x:Key="Section" TargetType="GroupBox">
+        <Style x:Key="Section" TargetType="GroupBox" BasedOn="{StaticResource {x:Type GroupBox}}">
             <Setter Property="Padding" Value="10,6,10,10"/>
             <Setter Property="HeaderTemplate">
                 <Setter.Value>
@@ -20,7 +23,7 @@
         <!-- 枠の中の補足（灰色の小さい字） -->
         <Style x:Key="Note" TargetType="TextBlock">
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Foreground" Value="#666"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
         </Style>
     </Window.Resources>
@@ -51,10 +54,12 @@
             <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
                 <Button x:Name="AddButton" Content="動画を追加…" Padding="12,4" Click="AddButton_Click"/>
                 <Button x:Name="ClearButton" Content="クリア" Padding="12,4" Margin="8,0,0,0" Click="ClearButton_Click"/>
+                <Button x:Name="SettingsButton" Content="設定" Padding="12,4" Margin="16,0,0,0" Click="SettingsButton_Click"
+                        ToolTip="画面の色（ライト／ダーク）など"/>
             </StackPanel>
         </Grid>
 
-        <Border Grid.Row="1" BorderBrush="#999" BorderThickness="1" CornerRadius="4">
+        <Border Grid.Row="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4">
             <ListBox x:Name="FilesList" BorderThickness="0"/>
         </Border>
 
@@ -154,11 +159,11 @@
 
                         <!-- 目盛り（-60, -40, -20, 0 dB の位置に合わせて3等分） -->
                         <UniformGrid Grid.Row="3" Grid.Column="1" Columns="3" Margin="8,1,8,0">
-                            <TextBlock Text="-60" FontSize="10" Foreground="#888"/>
-                            <TextBlock Text="-40" FontSize="10" Foreground="#888"/>
+                            <TextBlock Text="-60" FontSize="10" Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                            <TextBlock Text="-40" FontSize="10" Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
                             <Grid>
-                                <TextBlock Text="-20" FontSize="10" Foreground="#888"/>
-                                <TextBlock Text="0 dB" FontSize="10" Foreground="#888" HorizontalAlignment="Right"/>
+                                <TextBlock Text="-20" FontSize="10" Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                                <TextBlock Text="0 dB" FontSize="10" Foreground="{DynamicResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right"/>
                             </Grid>
                         </UniformGrid>
                     </Grid>
@@ -225,8 +230,10 @@
             </Grid.ColumnDefinitions>
             <StackPanel>
                 <ProgressBar x:Name="Bar" Height="18" Maximum="1"/>
-                <TextBlock x:Name="StatusText" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#555"/>
-                <TextBlock x:Name="EncoderText" Margin="0,2,0,0" Foreground="#888" FontSize="12" TextWrapping="Wrap"/>
+                <TextBlock x:Name="StatusText" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                <TextBlock x:Name="EncoderText" Margin="0,2,0,0" FontSize="12" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Top">
                 <Button x:Name="OpenFolderButton" Content="出力フォルダを開く" Padding="12,6" Margin="0,0,8,0"
@@ -260,13 +267,13 @@
                     <StackPanel x:Name="PreviewControls">
                         <UniformGrid Columns="3" Margin="-3,6,-3,0">
                             <RadioButton x:Name="PreviewFirstRadio" Content="最初" GroupName="PreviewFrame" IsChecked="True"
-                                         Margin="3" Padding="4" Style="{StaticResource {x:Type ToggleButton}}"
+                                         Margin="3" Padding="4" Style="{DynamicResource {x:Type ToggleButton}}"
                                          Checked="PreviewFrame_Checked"/>
                             <RadioButton x:Name="PreviewMiddleRadio" Content="真ん中" GroupName="PreviewFrame"
-                                         Margin="3" Padding="4" Style="{StaticResource {x:Type ToggleButton}}"
+                                         Margin="3" Padding="4" Style="{DynamicResource {x:Type ToggleButton}}"
                                          Checked="PreviewFrame_Checked"/>
                             <RadioButton x:Name="PreviewLastRadio" Content="最後" GroupName="PreviewFrame"
-                                         Margin="3" Padding="4" Style="{StaticResource {x:Type ToggleButton}}"
+                                         Margin="3" Padding="4" Style="{DynamicResource {x:Type ToggleButton}}"
                                          Checked="PreviewFrame_Checked"/>
                         </UniformGrid>
                         <TextBlock x:Name="PreviewCaption" Style="{StaticResource Note}" Margin="0,2,0,0"
