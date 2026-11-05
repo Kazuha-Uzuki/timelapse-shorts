@@ -33,6 +33,7 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 
 - この環境ではタグの push と、リモートのブランチ削除が拒否される（403）。回避しない。
 - Release はユーザーが GitHub の画面で作る（Releases → Draft a new release → タグに `vX.Y.Z`（小文字の v）→ Publish release）。
+  作ってもらうのは、こちらが main に入れて「入れました」と伝えたあと（先に作ると、前の版の中身になる。v0.4.0 はこれで v0.3.0 と同じ中身になった）。
   公開されると Actions がビルドして `TimelapseShorts-win64.zip` を Release に付ける（数分）。
 - zip の取得: GraphQL が使えないので `gh release download` は使えない。
   `gh api repos/Kazuha-Uzuki/timelapse-shorts/releases/tags/<tag> --jq '.assets[]|"\(.id) \(.name)"'` で id を調べ、
