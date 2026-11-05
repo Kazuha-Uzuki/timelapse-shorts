@@ -67,6 +67,10 @@ public partial class MainWindow : Window
     List<Ffmpeg.PreviewFrame>? _previewFrames; // プレビュー欄の画（最初・真ん中・最後）。作っていなければ null
     bool _previewIntro;                         // その画を作ったとき、完成品を冒頭に移していたか
     string? _previewKey;                        // その画を作ったときの設定（変わったら「古い」と知らせる）
+    string? _clipFile;                          // 動画のプレビュー（一時ファイル）。作っていなければ null
+    string? _clipKey;                           // それを作ったときの設定
+    string _clipCaption = "";                   // 「最初の 7 秒・音つき・12 秒で作成」
+    bool _clipPaused, _clipEnded;               // 一時停止中か・最後まで見たか
     readonly AppSettings _settings = AppSettings.Load(); // 前回の設定（閉じるときに今の設定を書く）
 
     // 変換中にPCがスリープして処理が止まるのを防ぐ（画面が消えるのは構わない）
@@ -126,6 +130,17 @@ public partial class MainWindow : Window
         _ready = true;
         ((RadioButton)PlatformPanel.Children[0]).IsChecked = true;
         RestoreSettings();
+
+        // 前に落ちたときなどに残った、動画のプレビューの一時ファイルを片付ける
+        // （1 時間より前のものだけ。ほかに開いているこのアプリが再生中のものは、使用中なので消えない）
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(System.IO.Path.GetTempPath(), "timelapse-preview-*.mp4"))
+                if (File.GetLastWriteTime(f) < DateTime.Now.AddHours(-1)) TryDelete(f);
+        }
+        catch
+        {
+        }
     }
 
     /// <summary>前回閉じたときの設定に戻す。見つからない値（消したフォントなど）は最初の値のまま。</summary>
@@ -332,6 +347,7 @@ public partial class MainWindow : Window
     {
         _files.Clear();
         _totalSeconds = 0;
+        SetClip(null, "");
         SetPreview(null, false);
         RefreshList();
     }
@@ -635,7 +651,8 @@ public partial class MainWindow : Window
         _previewFrames = frames;
         _previewIntro = introMoved;
         _previewKey = PreviewKey();
-        ShowPreviewFrame();
+        if (frames != null && PreviewVideoRadio.IsChecked == true) PreviewFirstRadio.IsChecked = true; // 作った画を見せる
+        else ShowPreviewFrame();
         UpdatePreviewStale();
     }
 
@@ -661,12 +678,169 @@ public partial class MainWindow : Window
 
     void PreviewFrame_Checked(object sender, RoutedEventArgs e)
     {
-        if (_ready) ShowPreviewFrame();
+        if (!_ready) return;
+        ShowPreviewFrame();
+        UpdatePreviewStale(); // 画と動画で「古い」かどうかが違う
     }
 
-    /// <summary>「最初・真ん中・最後」のうち、選ばれている画を表示する。</summary>
+    /// <summary>
+    /// 動画のプレビュー（最初の数秒・BGM 入り）を作って、プレビュー欄で再生する。作り終わるまでの時間は、
+    /// 元の動画のうち読む部分の長さと PC の速さで決まる（静止画のプレビューより時間がかかる）。
+    /// </summary>
+    async void PreviewVideoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_encoder == null || _files.Count == 0 || Validate(out var s) != null) return;
+        Ffmpeg.Caption? caption;
+        try
+        {
+            if (!TryMakeCaption(s, "プレビュー", out caption)) return;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        Ffmpeg.Bgm? bgm = _bgmFile == null ? null : new Ffmpeg.Bgm(_bgmFile, _bgmSeconds, s.FadeIn, s.FadeOut, VolumeSlider.Value);
+        var layout = BlurRadio.IsChecked == true ? Ffmpeg.Layout.Blur : Ffmpeg.Layout.Crop;
+        // 完成品の部分と、本編に切り替わって 2 秒まで（冒頭に移さないなら最初の 5 秒）。出来上がりより長くはしない
+        double length = Math.Min(_totalSeconds, s.Target);
+        double clipSeconds = Math.Min(length, s.Intro > 0 ? s.Intro + 2 : 5);
+        string file = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"timelapse-preview-{Guid.NewGuid():N}.mp4");
+        string status = StatusText.Text;
+        double bar = Bar.Value;
+        _cts = new CancellationTokenSource();
+        SetBusy(true, cancellable: true);
+        var progress = new Progress<Ffmpeg.Progress>(p =>
+        {
+            Bar.Value = p.Fraction;
+            StatusText.Text = $"{p.Stage}… {p.Fraction:P0}";
+        });
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            await Ffmpeg.RenderPreviewClipAsync(_files, _totalSeconds, s.Target, s.Intro, s.IntroFadeIn, s.IntroFadeOut,
+                layout, bgm, caption, _encoder, clipSeconds, file, progress, _cts.Token);
+            double took = sw.Elapsed.TotalSeconds;
+            SetClip(file, $"最初の {clipSeconds:0.#} 秒・{(bgm != null ? "音つき" : "音なし")}・"
+                          + (took < 60 ? $"{took:0} 秒" : Fmt(took)) + "で作成");
+        }
+        catch (OperationCanceledException)
+        {
+            TryDelete(file);
+        }
+        catch (Exception ex)
+        {
+            TryDelete(file);
+            MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            StatusText.Text = status;
+            Bar.Value = bar;
+            _cts.Dispose();
+            _cts = null;
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>動画のプレビューを入れ替える（null で消す）。前のファイルは消す。今の設定を、それを作ったときの設定として覚える。</summary>
+    void SetClip(string? file, string caption)
+    {
+        CloseClip();
+        if (_clipFile != null) TryDelete(_clipFile);
+        _clipFile = file;
+        _clipCaption = caption;
+        _clipKey = ClipKey();
+        if (file != null && PreviewVideoRadio.IsChecked != true) PreviewVideoRadio.IsChecked = true; // 切り替えると再生が始まる
+        else ShowPreviewFrame();
+        UpdatePreviewStale();
+    }
+
+    /// <summary>再生をやめて、ファイルを手放す（消せるように）。</summary>
+    void CloseClip()
+    {
+        PreviewVideo.Stop();
+        PreviewVideo.Close();
+        PreviewVideo.Source = null;
+        PreviewVideo.Visibility = Visibility.Collapsed;
+        PreviewReplay.Visibility = Visibility.Collapsed;
+    }
+
+    static void TryDelete(string file)
+    {
+        try { File.Delete(file); } catch { }
+    }
+
+    /// <summary>動画を出しているときは、クリックで一時停止・続き・もう一度。</summary>
+    void PreviewFrame_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (PreviewVideoRadio.IsChecked != true || _clipFile == null || PreviewVideo.Visibility != Visibility.Visible) return;
+        if (_clipEnded || _clipPaused)
+        {
+            if (_clipEnded) PreviewVideo.Position = TimeSpan.Zero;
+            _clipEnded = _clipPaused = false;
+            PreviewVideo.Play();
+            PreviewReplay.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            PreviewVideo.Pause();
+            _clipPaused = true;
+            PreviewReplayText.Text = "▶ クリックで続き";
+            PreviewReplay.Visibility = Visibility.Visible;
+        }
+    }
+
+    void PreviewVideo_MediaEnded(object sender, RoutedEventArgs e)
+    {
+        _clipEnded = true;
+        PreviewReplayText.Text = "▶ クリックでもう一度";
+        PreviewReplay.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>この PC ではここで再生できなかった（動画の再生に使う Windows の機能が無いなど）。ほかのアプリで開けるようにする。</summary>
+    void PreviewVideo_MediaFailed(object sender, ExceptionRoutedEventArgs e)
+    {
+        CloseClip();
+        PreviewPlaceholder.Text = "この PC では、ここで動画を再生できませんでした。";
+        PreviewPlaceholder.Visibility = Visibility.Visible;
+        PreviewOpenButton.Visibility = Visibility.Visible;
+    }
+
+    void PreviewOpenButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_clipFile != null) Process.Start(new ProcessStartInfo(_clipFile) { UseShellExecute = true });
+    }
+
+    /// <summary>「最初・真ん中・最後」の画か、動画のプレビューのうち、選ばれているものを表示する。</summary>
     void ShowPreviewFrame()
     {
+        PreviewOpenButton.Visibility = Visibility.Collapsed;
+        if (PreviewVideoRadio.IsChecked == true)
+        {
+            PreviewImage.Visibility = Visibility.Collapsed;
+            PreviewCaption.Text = _clipFile == null ? "" : _clipCaption;
+            PreviewFrame.Cursor = _clipFile == null ? null : System.Windows.Input.Cursors.Hand;
+            if (_clipFile == null)
+            {
+                CloseClip();
+                PreviewPlaceholder.Text = "動画を入れて、下の「動画で見る」を押すと、出来上がりの最初の数秒（完成品と、本編のはじめ）を"
+                                          + "BGM つきの動画で作って、ここで再生します";
+                PreviewPlaceholder.Visibility = Visibility.Visible;
+                return;
+            }
+            PreviewPlaceholder.Visibility = Visibility.Collapsed;
+            PreviewVideo.Visibility = Visibility.Visible;
+            PreviewVideo.Source = new Uri(_clipFile);
+            _clipPaused = _clipEnded = false;
+            PreviewReplay.Visibility = Visibility.Collapsed;
+            PreviewVideo.Play();
+            return;
+        }
+        CloseClip();
+        PreviewFrame.Cursor = null;
+        PreviewImage.Visibility = Visibility.Visible;
+        PreviewPlaceholder.Text = "動画を入れて、下の「プレビュー」を押すと、ここに出来上がりの画が出ます";
         int i = PreviewMiddleRadio.IsChecked == true ? 1 : PreviewLastRadio.IsChecked == true ? 2 : 0;
         string[] names = _previewIntro ? ["最初（完成品）", "真ん中", "最後"] : ["最初", "真ん中", "最後"];
         if (_previewFrames is { Count: 3 } frames)
@@ -688,9 +862,21 @@ public partial class MainWindow : Window
         BlurRadio.IsChecked, TextCheck.IsChecked, CaptionBox.Text, FontBox.SelectedIndex, ColorBox.SelectedIndex,
         BackBoxRadio.IsChecked, SizeBox.Text, PositionBox.SelectedIndex);
 
-    /// <summary>表示中のプレビューを作ったあとに設定が変わっていたら、そのことを画の上に出す。</summary>
-    void UpdatePreviewStale() =>
-        PreviewStale.Visibility = _previewFrames != null && PreviewKey() != _previewKey ? Visibility.Visible : Visibility.Collapsed;
+    /// <summary>
+    /// 動画のプレビューに関わる設定。画の設定に、BGM（曲・音量・フェードイン）と完成品のフェードを足したもの。
+    /// BGM のフェードアウトは動画の終わりにかかるので、最初の数秒の動画には出ない（含めない）。
+    /// </summary>
+    string ClipKey() => string.Join("|", PreviewKey(), _bgmFile, VolumeSlider.Value, FadeInBox.Text,
+        IntroFadeInBox.Text, IntroFadeOutBox.Text);
+
+    /// <summary>表示中のプレビュー（画か動画）を作ったあとに設定が変わっていたら、そのことを画の上に出す。</summary>
+    void UpdatePreviewStale()
+    {
+        bool video = PreviewVideoRadio.IsChecked == true;
+        bool stale = video ? _clipFile != null && ClipKey() != _clipKey : _previewFrames != null && PreviewKey() != _previewKey;
+        PreviewStaleText.Text = $"設定が変わりました。「{(video ? "動画で見る" : "プレビュー")}」を押すと反映されます";
+        PreviewStale.Visibility = stale ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     static BitmapImage LoadPng(byte[] png)
     {
@@ -712,6 +898,7 @@ public partial class MainWindow : Window
     {
         _cts?.Cancel(); // 変換中に閉じたら ffmpeg も止める
         SaveSettings();
+        SetClip(null, ""); // 動画のプレビューの一時ファイルを消す
         base.OnClosing(e);
     }
 
@@ -735,6 +922,7 @@ public partial class MainWindow : Window
             = BackNoneRadio.IsEnabled = BackBoxRadio.IsEnabled = TextCheck.IsChecked == true;
         bool valid = _files.Count > 0 && _totalSeconds > 0 && Validate(out _) == null;
         PreviewButton.IsEnabled = idle && valid; // プレビューは画像を作るだけなので、エンコーダーは要らない
+        PreviewVideoButton.IsEnabled = idle && _encoder != null && valid; // 動画のプレビューは動画を作るので要る
         StartButton.IsEnabled = idle && _encoder != null && valid;
     }
 

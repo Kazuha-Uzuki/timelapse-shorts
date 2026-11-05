@@ -278,22 +278,36 @@
             <Grid x:Name="PreviewArea" SizeChanged="PreviewArea_SizeChanged">
                 <StackPanel VerticalAlignment="Top">
                     <!-- 出来上がりと同じ 9:16 の枠。大きさは MainWindow.xaml.cs で決める -->
-                    <Border x:Name="PreviewFrame" Background="#1e1e1e" HorizontalAlignment="Center" Width="268" Height="476">
+                    <!-- 動画のプレビューを出しているときは、クリックで一時停止・続き・もう一度 -->
+                    <Border x:Name="PreviewFrame" Background="#1e1e1e" HorizontalAlignment="Center" Width="268" Height="476"
+                            MouseLeftButtonUp="PreviewFrame_MouseLeftButtonUp">
                         <Grid>
                             <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-                            <TextBlock x:Name="PreviewPlaceholder" Margin="20" Foreground="#bbb" TextWrapping="Wrap"
-                                       TextAlignment="Center" VerticalAlignment="Center"
-                                       Text="動画を入れて、下の「プレビュー」を押すと、ここに出来上がりの画が出ます"/>
-                            <!-- 表示中の画を作ったあとに設定が変わったら知らせる -->
+                            <!-- 動画のプレビュー（最初の数秒・BGM 入り）。音量は PC の音量のまま（BGM の大きさを確かめるため） -->
+                            <MediaElement x:Name="PreviewVideo" LoadedBehavior="Manual" UnloadedBehavior="Close" Stretch="Uniform"
+                                          Volume="1" Visibility="Collapsed" ScrubbingEnabled="True"
+                                          MediaEnded="PreviewVideo_MediaEnded" MediaFailed="PreviewVideo_MediaFailed"/>
+                            <StackPanel VerticalAlignment="Center" Margin="20">
+                                <TextBlock x:Name="PreviewPlaceholder" Foreground="#bbb" TextWrapping="Wrap" TextAlignment="Center"
+                                           Text="動画を入れて、下の「プレビュー」を押すと、ここに出来上がりの画が出ます"/>
+                                <!-- ここで再生できなかったときだけ出す（Windows の動画アプリなどで開く） -->
+                                <Button x:Name="PreviewOpenButton" Content="ほかのアプリで開く" Padding="12,4" Margin="0,12,0,0"
+                                        HorizontalAlignment="Center" Visibility="Collapsed" Click="PreviewOpenButton_Click"/>
+                            </StackPanel>
+                            <!-- 動画を止めたとき・最後まで見たとき -->
+                            <Border x:Name="PreviewReplay" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="16,8"
+                                    CornerRadius="20" Background="#B0000000" Visibility="Collapsed" IsHitTestVisible="False">
+                                <TextBlock x:Name="PreviewReplayText" Foreground="White"/>
+                            </Border>
+                            <!-- 表示中の画・動画を作ったあとに設定が変わったら知らせる -->
                             <Border x:Name="PreviewStale" VerticalAlignment="Bottom" Background="#D0000000" Padding="10,8"
                                     Visibility="Collapsed">
-                                <TextBlock Foreground="White" FontSize="12" TextWrapping="Wrap"
-                                           Text="設定が変わりました。「プレビュー」を押すと反映されます"/>
+                                <TextBlock x:Name="PreviewStaleText" Foreground="White" FontSize="12" TextWrapping="Wrap"/>
                             </Border>
                         </Grid>
                     </Border>
                     <StackPanel x:Name="PreviewControls">
-                        <UniformGrid Columns="3" Margin="-3,6,-3,0">
+                        <UniformGrid Columns="4" Margin="-3,6,-3,0">
                             <RadioButton x:Name="PreviewFirstRadio" Content="最初" GroupName="PreviewFrame" IsChecked="True"
                                          Margin="3" Padding="4" Style="{DynamicResource {x:Type ToggleButton}}"
                                          Checked="PreviewFrame_Checked"/>
@@ -303,12 +317,21 @@
                             <RadioButton x:Name="PreviewLastRadio" Content="最後" GroupName="PreviewFrame"
                                          Margin="3" Padding="4" Style="{DynamicResource {x:Type ToggleButton}}"
                                          Checked="PreviewFrame_Checked"/>
+                            <RadioButton x:Name="PreviewVideoRadio" Content="動画" GroupName="PreviewFrame"
+                                         Margin="3" Padding="4" Style="{DynamicResource {x:Type ToggleButton}}"
+                                         Checked="PreviewFrame_Checked"/>
                         </UniformGrid>
                         <TextBlock x:Name="PreviewCaption" Style="{StaticResource Note}" Margin="0,2,0,0"
                                    TextAlignment="Center"/>
-                        <Button x:Name="PreviewButton" Content="プレビュー" Padding="16,6" Margin="0,8,0,0" HorizontalAlignment="Stretch"
-                                IsEnabled="False" Click="PreviewButton_Click"
-                                ToolTip="出来上がりの最初・真ん中・最後の画を、作成する前に確かめます（音は入りません）"/>
+                        <!-- 2つ横に並べる（縦に重ねるとプレビューの枠が小さくなるため） -->
+                        <UniformGrid Columns="2" Margin="-4,8,-4,0">
+                            <Button x:Name="PreviewButton" Content="プレビュー" Padding="8,6" Margin="4,0" HorizontalAlignment="Stretch"
+                                    IsEnabled="False" Click="PreviewButton_Click"
+                                    ToolTip="出来上がりの最初・真ん中・最後の画を、作成する前に確かめます（静止画。数秒でできます）"/>
+                            <Button x:Name="PreviewVideoButton" Content="動画で見る" Padding="8,6" Margin="4,0" HorizontalAlignment="Stretch"
+                                    IsEnabled="False" Click="PreviewVideoButton_Click"
+                                    ToolTip="出来上がりの最初の数秒（完成品と、本編のはじめ）を、BGM つきの動画で確かめます"/>
+                        </UniformGrid>
                     </StackPanel>
                 </StackPanel>
             </Grid>

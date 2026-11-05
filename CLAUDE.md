@@ -50,6 +50,10 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
   連結リストの途中への `-ss` は、音の無い動画で時刻が半端だと ffmpeg の丸めのせいで失敗し、先頭から読み直して遅くなる。
   そのため完成品の部分とプレビューは、`Locate` でその時刻を含むファイルから読む。
 - プレビュー: 出来上がりの最初・真ん中・最後の1コマを、変換と同じフィルター（`FinishVideoAsync`）で 360×640 の PNG にする。終わりぎわで画が出なければ2秒前で描き直す。
+- 動画のプレビュー（`RenderPreviewClipAsync`）: 変換（`ConvertInAsync`）に `Clip` を渡し、最初の数秒（完成品＋本編 2 秒）だけを 360×640・BGM 入りで作る。
+  本編の入力は `-t` で必要なぶんだけ読む。BGM のフェードアウトは本物の位置のまま（なので普通は出ない）。画面の `MediaElement` で再生し、
+  開けなければ「ほかのアプリで開く」。一時ファイルは `%TEMP%\timelapse-preview-*.mp4`（入れ替え・閉じるときと、起動時に 1 時間より前のものを消す）。
+  WinCheck は作成した動画の最初と1コマずつ明るさを比べる。再生は GitHub の PC に音の機器が無いことがあるので「参考」行に出すだけ。
 - HDR（HLG / PQ）は zscale で SDR に。横向きの動画は「中央を切り抜く」か「ぼかし背景」（背景は 1/4 の解像度でぼかす）。
 - 文字: ASS を作って libass で描く。フォントは作業フォルダにコピーして `fontsdir` で渡す。ファミリー名は Windows 用の名前（`GlyphTypeface.Win32FamilyNames` の en-US）を使う（typographic な名前だと別のフォントになる）。背景あり（帯）は `BorderStyle 3`。
 - BGM: `-stream_loop` → `atrim` → `volume` →（上げたときだけ）`alimiter` → `afade`。音量は `volumedetect` で測る。

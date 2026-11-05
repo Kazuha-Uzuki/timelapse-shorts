@@ -168,16 +168,50 @@ public static class Ffmpeg
         }
     }
 
+    /// <summary>動画のプレビューにするときの指定。出来上がりの最初の Seconds 秒だけを、360×640 で Output に作る。</summary>
+    sealed record Clip(double Seconds, string Output);
+
+    /// <summary>
+    /// 動画のプレビュー: 出来上がりの最初の clipSeconds 秒（完成品と、本編のはじめ）だけを、変換と同じ処理で
+    /// 360×640・BGM 入りの mp4 にして output に作る。元の動画はその部分しか読まないので、全部を作成するよりずっと速い
+    /// （それでも、1コマずつしか読まない静止画のプレビューよりは、PC の速さに左右される）。
+    /// </summary>
+    public static async Task RenderPreviewClipAsync(IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds,
+        double introSeconds, double introFadeIn, double introFadeOut, Layout layout, Bgm? bgm, Caption? caption,
+        string encoder, double clipSeconds, string output, IProgress<Progress> progress, CancellationToken ct)
+    {
+        string work = Path.Combine(Path.GetTempPath(), $"timelapse_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(work);
+        try
+        {
+            await ConvertInAsync(work, inputs, totalSeconds, targetSeconds, introSeconds, layout, bgm, caption, "", encoder,
+                progress, ct, null, introFadeIn, introFadeOut, new Clip(clipSeconds, output));
+        }
+        finally
+        {
+            try { Directory.Delete(work, true); } catch { }
+        }
+    }
+
     static async Task<string> ConvertInAsync(string work,
         IReadOnlyList<string> inputs, double totalSeconds, double targetSeconds, double introSeconds,
         Layout layout, Bgm? bgm, Caption? caption, string suffix, string encoder,
-        IProgress<Progress> progress, CancellationToken ct, string? outputDir, double introFadeIn, double introFadeOut)
+        IProgress<Progress> progress, CancellationToken ct, string? outputDir, double introFadeIn, double introFadeOut,
+        Clip? clip = null)
     {
         string first = inputs[0];
         double factor = Math.Max(1, totalSeconds / targetSeconds);       // 何倍速にするか
         int frames = (int)Math.Round(totalSeconds / factor * OutputFps);  // 出力のコマ数（総尺ぴったりで切る）
         double seconds = (double)frames / OutputFps;                      // 出力の長さ
         double cut = totalSeconds - introSeconds * factor;                // 元動画で「完成品」が始まる位置
+        // 動画のプレビューなら、作るのは最初の clip.Seconds 秒だけ（BGM もその長さで切る。フェードアウトの位置は本物のまま）
+        if (clip != null) frames = Math.Min(frames, (int)Math.Round(clip.Seconds * OutputFps));
+        double made = (double)frames / OutputFps;                         // 実際に作る長さ
+        // 本編は、作る長さのぶん（と少しの余り）だけ元の動画を読む。全部作るときは、完成品の手前まで（冒頭移動なし: 全部）
+        double mainOut = made - (introSeconds > 0 ? introSeconds : 0);
+        string[] mainLimit = clip == null
+            ? (introSeconds > 0 ? ["-t", Sec(cut)] : [])
+            : ["-t", Sec(Math.Min(introSeconds > 0 ? cut : totalSeconds, (Math.Max(0, mainOut) + 0.2) * factor))];
 
         // 拾う間隔がキーフレーム間隔以上なら、キーフレームだけ読めば足りる（大幅に速い）
         bool keyframesOnly = await GetKeyframeIntervalAsync(first) <= factor / OutputFps;
@@ -199,26 +233,27 @@ public static class Ffmpeg
             var (k, local) = Locate(durations, cut);
             string[] tail = await SourceArgsAsync(work, "tail.txt", inputs.Skip(k).ToList(), durations.Skip(k).ToList(), ct);
             args.AddRange([.. skip, "-ss", Sec(local), .. tail]);
-            args.AddRange([.. skip, "-t", Sec(cut), .. source]);
+            args.AddRange([.. skip, .. mainLimit, .. source]);
             int introFrames = (int)Math.Round(introSeconds * OutputFps);
             chain = $"[0:v]{pick},trim=end_frame={introFrames}{IntroFades(introFrames, introFadeIn, introFadeOut)}[end];" +
                     $"[1:v]{pick}[main];[end][main]concat=n=2:v=1:a=0";
         }
         else
         {
-            args.AddRange([.. skip, .. source]);
+            args.AddRange([.. skip, .. mainLimit, .. source]);
             chain = $"[0:v]{pick}";
         }
-        string filter = await FinishVideoAsync(work, chain, hdr, layout, caption, seconds, ct) + "[v]";
+        string filter = await FinishVideoAsync(work, chain, hdr, layout, caption, seconds, ct)
+                        + (clip != null ? ",scale=360:640" : "") + "[v]";
 
         string[] audio = ["-an"];
         if (bgm != null)
         {
             // 曲が短ければ足りる回数だけ繰り返し、動画の長さで切ってからフェードをかける
-            int loops = bgm.Seconds > 0 ? Math.Max(0, (int)Math.Ceiling(seconds / bgm.Seconds) - 1) : 0;
+            int loops = bgm.Seconds > 0 ? Math.Max(0, (int)Math.Ceiling(made / bgm.Seconds) - 1) : 0;
             args.AddRange(["-stream_loop", loops.ToString(Inv), "-i", bgm.File]);
             int index = introSeconds > 0 ? 2 : 1;
-            filter += $";[{index}:a]atrim=duration={Sec(seconds)},asetpts=PTS-STARTPTS";
+            filter += $";[{index}:a]atrim=duration={Sec(made)},asetpts=PTS-STARTPTS";
             if (bgm.GainDb != 0) filter += $",volume={Sec(bgm.GainDb)}dB";
             // 上げたときに 0 dB を超える部分は、音割れしないよう少し手前（-0.3 dB）で抑える
             if (bgm.GainDb > 0) filter += ",alimiter=limit=0.966:level=false";
@@ -228,15 +263,15 @@ public static class Ffmpeg
             audio = ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"];
         }
 
-        string output = UniquePath(Path.Combine(outputDir ?? Path.GetDirectoryName(first)!,
+        string output = clip?.Output ?? UniquePath(Path.Combine(outputDir ?? Path.GetDirectoryName(first)!,
             $"{Path.GetFileNameWithoutExtension(first)}_{suffix}.mp4"));
         args.AddRange(["-filter_complex", filter, "-map", "[v]", .. audio,
             "-r", OutputFps.ToString(Inv), "-frames:v", frames.ToString(Inv)]);
         args.AddRange(EncoderArgs(encoder));
         args.AddRange(["-movflags", "+faststart", "-progress", "pipe:1", "-nostats", output]);
 
-        string stage = keyframesOnly ? "変換中（高速モード）" : "変換中";
-        await RunWithProgressAsync(args, seconds, stage, progress, output, work, ct);
+        string stage = clip != null ? "動画のプレビューを作成中" : keyframesOnly ? "変換中（高速モード）" : "変換中";
+        await RunWithProgressAsync(args, made, stage, progress, output, work, ct);
         return output;
     }
 

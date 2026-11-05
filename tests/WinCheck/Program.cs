@@ -11,6 +11,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using TimelapseShorts;
 
 // Windows 上で、同梱の ffmpeg とフォントを使って実際に変換し、結果を確かめる（GitHub Actions 用）。
@@ -21,6 +22,7 @@ static class Program
     static int _failures;
     static MainWindow? _window;        // CheckWindow で作った画面（最後にプレビューの表示も確かめる）
     static List<Ffmpeg.PreviewFrame>? _previewFrames; // RunAsync で作ったプレビューの画
+    static string? _clipPath;                           // RunAsync で作った動画のプレビュー
     // 設定画面で選ぶ「決まったフォルダ」（テストのあいだだけ使う）
     static readonly string OutputFolder = Path.Combine(Path.GetTempPath(), "wincheck 保存先");
     // 手動実行で「スクリーンショット」を ON にしたときだけ、画面の画像をログに出す（見た目の確認用）
@@ -75,10 +77,11 @@ static class Program
         Set("_encoder", "h264_mf");
         Call("RefreshList");
         Check("基本の表示", w.InfoText.Text == "合計 1:00:00 → 2:59（20.1倍速）" && w.StartButton.IsEnabled
-                            && w.PreviewButton.IsEnabled, w.InfoText.Text);
+                            && w.PreviewButton.IsEnabled && w.PreviewVideoButton.IsEnabled, w.InfoText.Text);
         Set("_encoder", null);
         Refresh();
-        Check("エンコーダーが無くてもプレビューはできる", w.PreviewButton.IsEnabled && !w.StartButton.IsEnabled);
+        Check("エンコーダーが無くてもプレビューはできる（動画のプレビューは動画を作るのでできない）",
+            w.PreviewButton.IsEnabled && !w.StartButton.IsEnabled && !w.PreviewVideoButton.IsEnabled);
         Set("_encoder", "h264_mf");
         Check("フェードの初期値（BGM 0.5 秒・完成品 0.3 秒）", w.FadeInBox.Text == "0.5" && w.FadeOutBox.Text == "0.5"
             && w.IntroFadeInBox.Text == "0.3" && w.IntroFadeOutBox.Text == "0.3" && w.IntroFadeInBox.IsEnabled);
@@ -229,6 +232,27 @@ static class Program
         var (_, louderPeak) = await Ffmpeg.GetVolumeAsync(await ConvertAsync(video, total, encoder, "plus24", plainBgm with { GainDb = 24 }, null));
         Check("音量 +24 dB でも音割れしない", louderPeak <= 0, $"最大 {songPeak} + 24 → {louderPeak} dB");
 
+        // 動画のプレビュー: 完成品 1 秒＋本編 2 秒＝最初の 3 秒だけを 360×640・BGM 入りで。
+        // 中身は、同じ設定で作成した動画（faded）の最初の 3 秒と同じはず（大きさだけ違う）
+        _clipPath = Path.Combine(work, "動画 プレビュー.mp4");
+        var clipWatch = Stopwatch.StartNew();
+        await Ffmpeg.RenderPreviewClipAsync([video], total, 5, 1, 0.3, 0.3, Ffmpeg.Layout.Crop, bgm, null, encoder, 3,
+            _clipPath, new Progress<Ffmpeg.Progress>(_ => { }), CancellationToken.None);
+        double clipTime = clipWatch.Elapsed.TotalSeconds;
+        string clipInfo = await FfprobeAsync("-v", "error", "-show_entries", "stream=codec_type,width,height,duration",
+            "-of", "csv=p=0", _clipPath);
+        var clipDurations = System.Text.RegularExpressions.Regex.Matches(clipInfo, @"(\d+\.\d+)")
+            .Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+        Check("動画のプレビュー: 3 秒・360×640・BGM の音あり",
+            clipInfo.Contains("video,360,640") && clipInfo.Contains("audio") && clipDurations.Count == 2
+            && clipDurations.All(d => Math.Abs(d - 3) < 0.1),
+            clipInfo.ReplaceLineEndings(" | ") + $"（作るのに {clipTime:0.00}秒）");
+        var clipLuma = await LumaAsync(_clipPath);
+        Check("動画のプレビュー: 作成した動画の最初の 3 秒と同じ（完成品のフェードも）",
+            clipLuma.Count == 90 && faded.Count >= 90 && Enumerable.Range(0, 90).All(i => Math.Abs(clipLuma[i] - faded[i]) < 8),
+            string.Join(" ", new[] { 0, 8, 15, 29, 30, 89 }.Where(i => i < clipLuma.Count && i < faded.Count)
+                .Select(i => $"{i}:{clipLuma[i]:0}/{faded[i]:0}")) + $"（{clipLuma.Count} コマ）");
+
         await CheckPreviewAsync(video, video2, total, text, cap);
 
         Check("作業用フォルダが残っていない", Directory.GetDirectories(Path.GetTempPath(), "timelapse_*").Length == 0);
@@ -318,6 +342,7 @@ static class Program
             w.VolumeSlider.Value = -3;
             Check("プレビュー欄: BGM の音量では古くならない", !w.PreviewStale.IsVisible);
             w.VolumeSlider.Value = -6;
+            CheckVideoPreview(w);
 
             SettingsWindow.ApplyTheme("Light"); // CI の Windows の色に左右されないよう、まずライトで確かめる
             Check("ライト: 背景が明るい", Luminance(w.Background) > 0.8, $"{w.Background}");
@@ -384,7 +409,8 @@ static class Program
 
             typeof(MainWindow).GetMethod("ClearButton_Click", F)!.Invoke(w, [w.ClearButton, new RoutedEventArgs()]);
             Check("動画をクリアするとプレビューも消える", w.PreviewImage.Source == null && w.PreviewPlaceholder.IsVisible
-                                                    && !w.PreviewStale.IsVisible);
+                                                    && !w.PreviewStale.IsVisible
+                                                    && typeof(MainWindow).GetField("_clipFile", F)!.GetValue(w) == null);
             string font = w.FontBox.SelectedItem!.ToString()!;
             w.Close(); // 閉じるときに設定を書く
             CheckRestore(font);
@@ -393,6 +419,78 @@ static class Program
         {
             Check("プレビュー欄", false, ex.ToString());
         }
+    }
+
+    /// <summary>
+    /// 動画のプレビューの表示。作ると「動画」に切り替わって再生し、「最初」などに戻すと静止画に戻る。
+    /// 再生できるかは参考として出す（GitHub の PC には音の出る機器が無く、音入りの動画を開けないことがあるため）。
+    /// </summary>
+    static void CheckVideoPreview(MainWindow w)
+    {
+        if (_clipPath == null)
+        {
+            Check("動画のプレビュー欄", false, "前のテストが通っていないので確かめられない");
+            return;
+        }
+        // 作ったものはクリアや次の作成で消されるので、写しを渡す
+        string clip = Path.Combine(Path.GetTempPath(), $"timelapse-preview-wincheck-{Environment.ProcessId}.mp4");
+        File.Copy(_clipPath, clip, true);
+        typeof(MainWindow).GetMethod("SetClip", F)!.Invoke(w, [clip, "最初の 3 秒・音つき・1 秒で作成"]);
+        Check("動画のプレビュー: 作ると「動画」に切り替わって再生する",
+            w.PreviewVideoRadio.IsChecked == true && w.PreviewVideo.IsVisible && !w.PreviewImage.IsVisible
+            && !w.PreviewPlaceholder.IsVisible && w.PreviewCaption.Text == "最初の 3 秒・音つき・1 秒で作成", w.PreviewCaption.Text);
+        Console.WriteLine($"参考  GitHub の PC での再生: {WaitMedia(w.PreviewVideo)}");
+        Pump(TimeSpan.FromSeconds(1.5)); // 少し再生させてから写す
+        var client = (FrameworkElement)VisualTreeHelper.GetChild(w, 0);
+        Shot("main-video", client, client.RenderSize);
+
+        Check("動画のプレビュー: 作ったあと設定を変えなければ最新", !w.PreviewStale.IsVisible);
+        w.VolumeSlider.Value = -3;
+        Check("動画のプレビュー: BGM の音量を変えると古いと出る（静止画とちがって）",
+            w.PreviewStale.IsVisible && w.PreviewStaleText.Text.Contains("「動画で見る」"), w.PreviewStaleText.Text);
+        w.VolumeSlider.Value = -6;
+        w.PreviewFirstRadio.IsChecked = true;
+        Check("動画のプレビュー: 「最初」に戻すと静止画（動画は止める）",
+            w.PreviewImage.IsVisible && !w.PreviewVideo.IsVisible && w.PreviewCaption.Text.StartsWith("最初")
+            && w.PreviewStaleText.Text.Contains("「プレビュー」"), w.PreviewCaption.Text);
+    }
+
+    /// <summary>MediaElement が開けるまで（最大 10 秒）待って、どうなったかを返す。</summary>
+    static string WaitMedia(MediaElement media)
+    {
+        string result = "10 秒待っても開かなかった";
+        var frame = new DispatcherFrame();
+        RoutedEventHandler opened = (_, _) =>
+        {
+            result = $"開けた（{media.NaturalVideoWidth}×{media.NaturalVideoHeight}・{media.NaturalDuration}）";
+            frame.Continue = false;
+        };
+        EventHandler<ExceptionRoutedEventArgs> failed = (_, e) =>
+        {
+            result = "開けなかった: " + e.ErrorException.Message;
+            frame.Continue = false;
+        };
+        media.MediaOpened += opened;
+        media.MediaFailed += failed;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+        timer.Tick += (_, _) => frame.Continue = false;
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        timer.Stop();
+        media.MediaOpened -= opened;
+        media.MediaFailed -= failed;
+        return result;
+    }
+
+    /// <summary>画面の処理を time のあいだ進める（再生などを進めるため）。</summary>
+    static void Pump(TimeSpan time)
+    {
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer { Interval = time };
+        timer.Tick += (_, _) => frame.Continue = false;
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        timer.Stop();
     }
 
     /// <summary>
