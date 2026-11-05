@@ -77,14 +77,14 @@
                                   Checked="Settings_Changed" Unchecked="Settings_Changed"/>
                         <TextBox x:Name="IntroBox" Text="5" Width="40" Margin="6,0" Padding="2"
                                  VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
-                        <TextBlock Text="秒を冒頭に移動する" VerticalAlignment="Center"/>
+                        <TextBlock Text="秒を移す" VerticalAlignment="Center"/>
                     </WrapPanel>
                     <TextBlock Text="横向きで撮った動画の場合" FontWeight="SemiBold" Margin="0,12,0,4"/>
                     <RadioButton x:Name="CropRadio" IsChecked="True" Margin="0,0,0,2">
-                        <TextBlock Text="中央を切り抜く（画面いっぱい。左右は切れる）" TextWrapping="Wrap"/>
+                        <TextBlock Text="中央を切り抜く（左右が切れる）" TextWrapping="Wrap"/>
                     </RadioButton>
                     <RadioButton x:Name="BlurRadio" Margin="0,2,0,0">
-                        <TextBlock Text="全体を残す（上下をぼかした背景で埋める）" TextWrapping="Wrap"/>
+                        <TextBlock Text="全体を残す（上下はぼかした背景）" TextWrapping="Wrap"/>
                     </RadioButton>
                 </StackPanel>
             </GroupBox>
@@ -145,20 +145,15 @@
                         <TextBlock Grid.Row="2" Grid.Column="2" x:Name="PeakText" FontSize="12" Margin="0,4,0,0"
                                    TextAlignment="Right" VerticalAlignment="Center"/>
 
-                        <!-- 目盛り（-60, -40, -20, -10, 0 dB の位置に合わせた幅） -->
-                        <Grid Grid.Row="3" Grid.Column="1" Margin="8,1,8,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="2*"/>
-                                <ColumnDefinition Width="2*"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
+                        <!-- 目盛り（-60, -40, -20, 0 dB の位置に合わせて3等分） -->
+                        <UniformGrid Grid.Row="3" Grid.Column="1" Columns="3" Margin="8,1,8,0">
                             <TextBlock Text="-60" FontSize="10" Foreground="#888"/>
-                            <TextBlock Grid.Column="1" Text="-40" FontSize="10" Foreground="#888"/>
-                            <TextBlock Grid.Column="2" Text="-20" FontSize="10" Foreground="#888"/>
-                            <TextBlock Grid.Column="3" Text="-10" FontSize="10" Foreground="#888"/>
-                            <TextBlock Grid.Column="3" Text="0 dB" FontSize="10" Foreground="#888" HorizontalAlignment="Right"/>
-                        </Grid>
+                            <TextBlock Text="-40" FontSize="10" Foreground="#888"/>
+                            <Grid>
+                                <TextBlock Text="-20" FontSize="10" Foreground="#888"/>
+                                <TextBlock Text="0 dB" FontSize="10" Foreground="#888" HorizontalAlignment="Right"/>
+                            </Grid>
+                        </UniformGrid>
                     </Grid>
                     <TextBlock x:Name="LevelNote" Margin="0,4,0,0" Style="{StaticResource Note}"/>
                     <TextBlock Margin="0,8,0,0" Style="{StaticResource Note}"
@@ -168,9 +163,7 @@
 
             <GroupBox Grid.Column="4" x:Name="TextSection" Header="テキスト" Style="{StaticResource Section}">
                 <StackPanel>
-                    <CheckBox x:Name="TextCheck" Checked="Settings_Changed" Unchecked="Settings_Changed">
-                        <TextBlock Text="テキストを入れる（最初から最後まで表示）" TextWrapping="Wrap"/>
-                    </CheckBox>
+                    <CheckBox x:Name="TextCheck" Content="テキストを入れる" Checked="Settings_Changed" Unchecked="Settings_Changed"/>
                     <TextBox x:Name="CaptionBox" Margin="0,8,0,0" Height="52" Padding="2" AcceptsReturn="True"
                              TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="Settings_TextChanged"/>
                     <Grid Margin="0,8,0,0">
@@ -200,7 +193,7 @@
                         <TextBlock x:Name="PreviewText" FontSize="22" TextWrapping="Wrap" TextAlignment="Center"/>
                     </Border>
                     <TextBlock Margin="0,6,0,0" Style="{StaticResource Note}"
-                               Text="★は同梱の Google Fonts、それ以外はこの PC のフォントです。大きさは文字の高さ（画面の横幅 1080 に対して。目安 60〜120）。"/>
+                               Text="動画の最初から最後まで表示します。★は同梱の Google Fonts、それ以外はこの PC のフォントです。大きさは文字の高さ（画面の横幅 1080 に対して。目安 60〜120）。"/>
                 </StackPanel>
             </GroupBox>
         </Grid>
