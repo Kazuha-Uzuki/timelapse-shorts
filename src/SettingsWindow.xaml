@@ -44,8 +44,9 @@
         <CheckBox x:Name="SoundCheck" Content="音で知らせる" Checked="Done_Changed" Unchecked="Done_Changed"/>
         <CheckBox x:Name="OpenFolderCheck" Content="保存先のフォルダを開く（できた動画を選んだ状態で）"
                   Checked="Done_Changed" Unchecked="Done_Changed"/>
+        <CheckBox x:Name="SleepCheck" Content="PC をスリープする" Checked="Done_Changed" Unchecked="Done_Changed"/>
         <TextBlock Margin="0,4,0,0" Style="{StaticResource Note}"
-                   Text="PC のスリープは、作成のたびに、画面の下の「終わったら PC をスリープ」で選びます。"/>
+                   Text="スリープは、うまく作成できたときだけです。60 秒前にお知らせが出て、やめることもできます。作成の途中で変えても、その回から効きます。"/>
 
         <TextBlock Margin="0,16,0,0" Style="{StaticResource Note}"
                    Text="この画面の設定と、投稿先・総尺・冒頭に移す秒数・BGM の音量とフェード・文字のフォント／色／位置／背景／大きさは、次に起動したときも同じにします。"/>

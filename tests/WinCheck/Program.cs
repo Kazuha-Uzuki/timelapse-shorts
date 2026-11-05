@@ -307,15 +307,19 @@ static class Program
             Check("設定画面: 最初は「Windows に合わせる」「元の動画と同じフォルダ」・終わったときは何もしない",
                 settings.SystemRadio.IsChecked == true && settings.SameFolderRadio.IsChecked == true
                 && settings.SoundCheck.IsChecked == false && settings.OpenFolderCheck.IsChecked == false
+                && settings.SleepCheck.IsChecked == false
                 && settings.FolderText.Text == OutputFolder);
             settings.DarkRadio.IsChecked = true;
             settings.FixedFolderRadio.IsChecked = true;
             settings.SoundCheck.IsChecked = true;
             settings.OpenFolderCheck.IsChecked = true;
+            // スリープも選んで覚えさせる（このテストは「作成する」を押さないので、本当にスリープすることはない）
+            settings.SleepCheck.IsChecked = true;
             Check("設定画面: 色と保存先は別々に選べる", settings.DarkRadio.IsChecked == true && settings.FixedFolderRadio.IsChecked == true
                                                  && settings.SameFolderRadio.IsChecked == false);
-            Check("設定画面: 選んだ内容が設定に入る", appSettings is { Theme: "Dark", UseOutputFolder: true, DoneSound: true, DoneOpenFolder: true },
-                $"{appSettings.Theme} / {appSettings.UseOutputFolder} / {appSettings.DoneSound} / {appSettings.DoneOpenFolder}");
+            Check("設定画面: 選んだ内容が設定に入る",
+                appSettings is { Theme: "Dark", UseOutputFolder: true, DoneSound: true, DoneOpenFolder: true, DoneSleep: true },
+                $"{appSettings.Theme} / {appSettings.UseOutputFolder} / {appSettings.DoneSound} / {appSettings.DoneOpenFolder} / {appSettings.DoneSleep}");
             settings.UpdateLayout();
             w.UpdateLayout();
             Check("ダーク: 背景が暗く、文字が明るい", Luminance(w.Background) < 0.2 && Luminance(w.Foreground) > 0.8
@@ -335,10 +339,7 @@ static class Program
             CheckLayout(w, 1240, 650, "ダーク最小・作成後");
             w.OpenFolderButton.Visibility = Visibility.Collapsed;
             w.StatusText.Text = status;
-            Check("終わったらスリープ: 最初はオフで、作成中でも選べる", w.SleepCheck.IsChecked == false
-                                                                && !w.SettingsPanel.IsAncestorOf(w.SleepCheck));
             CheckSleepWindow(w);
-            w.SleepCheck.IsChecked = true; // これは次の起動に持ち越さないはず
 
             // 次の起動で戻るか確かめるため、最初とは違う値にしておく
             ((RadioButton)w.PlatformPanel.Children[2]).IsChecked = true; // TikTok
@@ -410,9 +411,9 @@ static class Program
         Check("前回の色（ダーク）で開く", Application.Current.ThemeMode == ThemeMode.Dark && Luminance(w.Background) < 0.2,
             $"{Application.Current.ThemeMode}");
         var restored = (AppSettings)typeof(MainWindow).GetField("_settings", F)!.GetValue(w)!;
-        Check("前回の保存先・終わったときの動きに戻る",
-            restored is { UseOutputFolder: true, DoneSound: true, DoneOpenFolder: true } && restored.OutputFolder == OutputFolder);
-        Check("「終わったら PC をスリープ」は持ち越さない（オフで始まる）", w.SleepCheck.IsChecked == false);
+        Check("前回の保存先・終わったときの動き（スリープも）に戻る",
+            restored is { UseOutputFolder: true, DoneSound: true, DoneOpenFolder: true, DoneSleep: true }
+            && restored.OutputFolder == OutputFolder);
         w.Close();
 
         File.WriteAllText(AppSettings.FilePath, "{ こわれた");

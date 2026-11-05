@@ -58,8 +58,9 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
   自分で作る Style は `BasedOn="{StaticResource {x:Type …}}"` にする（付けないと Fluent の見た目にならない）。
   窓の背景は `ApplicationBackgroundBrush` を明示している（Fluent の既定は透明＝Mica）。
 - 保存先: `Ffmpeg.ConvertAsync` の最後の引数 `outputDir`（null なら1本目の動画と同じフォルダ）。決まったフォルダが無ければ、変換を始める前に確かめる。
-- 作成が終わったとき: 音は `MessageBeep`、フォルダは `explorer /select`。スリープは作成ボタンの横の `SleepCheck`（覚えない・1回ごとにオフ）で、
-  成功したときだけ、窓を前に出して `SleepWindow`（Enter / Esc は「スリープしない」）→ `SetSuspendState(false, false, false)`。
-  WinCheck では `SleepWindow` の返す値だけを確かめ、本当にスリープはさせない（CI の PC が止まる）。
+- 作成が終わったとき（`AfterDone`、設定画面の内容をそのとき読むので、作成中に変えても効く）: 音は `MessageBeep`、
+  フォルダは `explorer /select`。スリープ（`DoneSleep`、ほかの設定と同じく覚える）は成功したときだけで、窓を前に出して
+  `SleepWindow`（60 秒。Enter / Esc は「スリープしない」）→ `SetSuspendState(false, false, false)`。
+  WinCheck は「作成する」を押さないので `AfterDone` は通らない。`SleepWindow` の返す値だけを確かめ、本当にスリープはさせない（CI の PC が止まる）。
 - 設定画面のラジオボタンは2組あるので `GroupName` で分けている（同じパネルにあると1組として扱われる）。
 - WinCheck: CI の画面は 1024×768 なので、窓をそれより大きくするために `WM_GETMINMAXINFO` と WPF の `_trackMaxWidthDeviceUnits` などを広げている。

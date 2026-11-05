@@ -27,7 +27,7 @@ public sealed class AppSettings
     public string? OutputFolder { get; set; }      // 決まったフォルダ（「同じフォルダ」に戻しても覚えておく）
     public bool DoneSound { get; set; }            // 作成が終わったら音で知らせる
     public bool DoneOpenFolder { get; set; }       // 作成が終わったら保存先のフォルダを開く
-    // 「終わったら PC をスリープ」は、つけたまま忘れると使っている最中に眠ってしまうので覚えない（毎回オフで始まる）
+    public bool DoneSleep { get; set; }            // 作成が終わったら PC をスリープ（60 秒のお知らせでやめられる）
 
     /// <summary>保存先。テストでは別の場所に変える。</summary>
     public static string FilePath { get; set; } = Path.Combine(

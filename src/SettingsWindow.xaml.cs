@@ -17,6 +17,7 @@ public partial class SettingsWindow : Window
         (settings.UseOutputFolder && settings.OutputFolder != null ? FixedFolderRadio : SameFolderRadio).IsChecked = true;
         SoundCheck.IsChecked = settings.DoneSound;
         OpenFolderCheck.IsChecked = settings.DoneOpenFolder;
+        SleepCheck.IsChecked = settings.DoneSleep;
         ShowFolder();
         _ready = true;
     }
@@ -67,6 +68,7 @@ public partial class SettingsWindow : Window
         if (!_ready) return; // 最初の値を入れている途中に、まだ入れていない方の値で上書きしないように
         _settings.DoneSound = SoundCheck.IsChecked == true;
         _settings.DoneOpenFolder = OpenFolderCheck.IsChecked == true;
+        _settings.DoneSleep = SleepCheck.IsChecked == true;
     }
 
     void CloseButton_Click(object sender, RoutedEventArgs e) => Close();

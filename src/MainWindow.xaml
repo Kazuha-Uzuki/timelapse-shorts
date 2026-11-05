@@ -253,9 +253,6 @@
                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Top">
-                <!-- 作成の途中でもつけられる（寝る前につける、など）。1回ごとで、起動したときはいつもオフ -->
-                <CheckBox x:Name="SleepCheck" Content="終わったら PC をスリープ" VerticalAlignment="Center" Margin="0,0,16,0"
-                          ToolTip="作成が終わったら、60 秒のお知らせのあとで PC をスリープします（お知らせでやめられます）"/>
                 <Button x:Name="OpenFolderButton" Content="出力フォルダを開く" Padding="12,6" Margin="0,0,8,0"
                         Visibility="Collapsed" Click="OpenFolderButton_Click"/>
                 <Button x:Name="CancelButton" Content="中止" Padding="16,6" Margin="0,0,8,0"

@@ -562,13 +562,12 @@ public partial class MainWindow : Window
             "保存先の確認", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
     }
 
-    /// <summary>作成が終わったあとの動き（設定画面の「作成が終わったとき」と、「終わったら PC をスリープ」のとおり）。</summary>
+    /// <summary>作成が終わったあとの動き（設定画面の「作成が終わったとき」のとおり。作成中に変えても、ここで読むので効く）。</summary>
     void AfterDone()
     {
         if (_settings.DoneSound) MessageBeep(MbIconAsterisk);
         if (_settings.DoneOpenFolder) OpenOutputFolder();
-        if (SleepCheck.IsChecked != true) return;
-        SleepCheck.IsChecked = false; // 1回ごと。次に作成するときは、またつける
+        if (!_settings.DoneSleep) return;
         // PC を使っている人が気づけるよう、お知らせを見えるところに出して音も鳴らす
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
