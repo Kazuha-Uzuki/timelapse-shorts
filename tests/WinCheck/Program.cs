@@ -232,6 +232,8 @@ static class Program
         var (_, louderPeak) = await Ffmpeg.GetVolumeAsync(await ConvertAsync(video, total, encoder, "plus24", plainBgm with { GainDb = 24 }, null));
         Check("音量 +24 dB でも音割れしない", louderPeak <= 0, $"最大 {songPeak} + 24 → {louderPeak} dB");
 
+        await CheckOtherPathsAsync(work, video, video2, total, encoder, bgm);
+
         // 動画のプレビュー: 完成品 1 秒＋本編 2 秒＝最初の 3 秒だけを 360×640・BGM 入りで。
         // 中身は、同じ設定で作成した動画（faded）の最初の 3 秒と同じはず（大きさだけ違う）
         _clipPath = Path.Combine(work, "動画 プレビュー.mp4");
@@ -257,6 +259,89 @@ static class Program
 
         Check("作業用フォルダが残っていない", Directory.GetDirectories(Path.GetTempPath(), "timelapse_*").Length == 0);
     }
+
+    /// <summary>
+    /// ふだんのテストで通らない道も通す。同梱の FFmpeg は作るたびに最新の安定版になり、LGPL 版なので GPL のフィルターは
+    /// 入っていない。使えないフィルターがあると、その道だけ「変換に失敗しました」になるので、全部の道で実際に作ってみる
+    /// （ぼかした背景は、これが無かったので boxblur が無いことに気づけなかった）。
+    /// </summary>
+    static async Task CheckOtherPathsAsync(string work, string video, string video2, double total, string encoder, Ffmpeg.Bgm bgm)
+    {
+        var ct = CancellationToken.None;
+        // 横向きの動画を「全体を残す（上下はぼかした背景）」で。中央を切り抜いたものとは違う画になる
+        string wide = Path.Combine(work, "横向き.mp4");
+        await FfmpegAsync("-f", "lavfi", "-i", "testsrc2=s=960x540:r=30:d=10", "-c:v", "mpeg4", "-q:v", "5", wide);
+        try
+        {
+            string blurred = await Ffmpeg.ConvertAsync([wide], 10, 5, 0, Ffmpeg.Layout.Blur, null, null, "blur", encoder, NoProgress, ct);
+            string cropped = await Ffmpeg.ConvertAsync([wide], 10, 5, 0, Ffmpeg.Layout.Crop, null, null, "crop", encoder, NoProgress, ct);
+            string info = await VideoInfoAsync(blurred);
+            Check("横向きの動画: 全体を残す（ぼかした背景）", info == "1080,1920,150"
+                                                       && await FrameHashAsync(blurred) != await FrameHashAsync(cropped), info);
+            var stills = await Ffmpeg.RenderPreviewAsync([wide], 10, 5, 0, Ffmpeg.Layout.Blur, null, ct);
+            Check("横向きの動画: ぼかした背景のプレビュー（静止画）", stills.Count == 3);
+        }
+        catch (Exception ex)
+        {
+            Check("横向きの動画: 全体を残す（ぼかした背景）", false, ex.Message);
+        }
+
+        // iPhone などの HDR（HLG・10 ビット）の動画。普通の色（SDR）に直して作る。完成品のフェードも 10 ビットのままかける
+        string hdr = Path.Combine(work, "HDR.mkv");
+        await FfmpegAsync("-f", "lavfi", "-i", "testsrc2=s=540x960:r=30:d=10",
+            "-vf", "format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc", "-c:v", "ffv1", hdr);
+        try
+        {
+            var detect = typeof(Ffmpeg).GetMethod("GetHdrTransferAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
+            string? trc = await (Task<string?>)detect.Invoke(null, [hdr])!;
+            string sdr = await Ffmpeg.ConvertAsync([hdr], 10, 5, 1, Ffmpeg.Layout.Crop, null, null, "hdr", encoder, NoProgress, ct,
+                introFadeIn: 0.3, introFadeOut: 0.3);
+            string info = await VideoInfoAsync(sdr);
+            Check("HDR（HLG）の動画: 普通の色に直して作れる", trc == "arib-std-b67" && info == "1080,1920,150", $"{trc} / {info}");
+        }
+        catch (Exception ex)
+        {
+            Check("HDR（HLG）の動画: 普通の色に直して作れる", false, ex.Message);
+        }
+
+        // キーフレームが多い動画（3コマごと）: 拾う間隔の方が長いので、キーフレームだけ読む高速モードになる
+        string keyed = Path.Combine(work, "キーフレーム多め.mp4");
+        await FfmpegAsync("-f", "lavfi", "-i", "testsrc2=s=540x960:r=30:d=30", "-c:v", "mpeg4", "-q:v", "5", "-g", "3", keyed);
+        try
+        {
+            var stages = new List<string>();
+            string fast = await Ffmpeg.ConvertAsync([keyed], 30, 5, 1, Ffmpeg.Layout.Crop, bgm, null, "fast", encoder,
+                new SyncProgress<Ffmpeg.Progress>(p => stages.Add(p.Stage)), ct, introFadeIn: 0.3, introFadeOut: 0.3);
+            string info = await VideoInfoAsync(fast);
+            Check("キーフレームだけ読む高速モード", stages.Contains("変換中（高速モード）") && info == "1080,1920,150",
+                $"{string.Join(" / ", stages.Distinct())} / {info}");
+        }
+        catch (Exception ex)
+        {
+            Check("キーフレームだけ読む高速モード", false, ex.Message);
+        }
+
+        // 2本をつないで作る（完成品は2本目の終わりから）
+        try
+        {
+            double total2 = await Ffmpeg.GetDurationAsync(video2);
+            string joined = await Ffmpeg.ConvertAsync([video, video2], total + total2, 5, 1, Ffmpeg.Layout.Crop, bgm, null, "joined",
+                encoder, NoProgress, ct, introFadeIn: 0.3, introFadeOut: 0.3);
+            string info = await VideoInfoAsync(joined);
+            Check("2本をつないで作れる", info == "1080,1920,150", info);
+        }
+        catch (Exception ex)
+        {
+            Check("2本をつないで作れる", false, ex.Message);
+        }
+    }
+
+    static readonly IProgress<Ffmpeg.Progress> NoProgress = new Progress<Ffmpeg.Progress>(_ => { });
+
+    /// <summary>映像の幅・高さ・コマ数（「1080,1920,150」）。</summary>
+    static async Task<string> VideoInfoAsync(string file) =>
+        (await FfprobeAsync("-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,nb_frames",
+            "-of", "csv=p=0", file)).Trim();
 
     /// <summary>プレビュー（最初・真ん中・最後の3枚）。大きさ、文字、帯、複数ファイルのときに正しい場所を描くかを確かめる。</summary>
     static async Task CheckPreviewAsync(string video, string video2, double total, string text, (string File, string Family, string Missing) font)
@@ -698,4 +783,10 @@ static class Program
         if (p.ExitCode != 0) throw new InvalidOperationException($"{Path.GetFileName(exe)} が失敗: {await stderr}");
         return await stdout;
     }
+}
+
+/// <summary>その場で呼ぶ IProgress（Progress&lt;T&gt; は別のスレッドであとから呼ぶので、終わった直後に数えると足りないことがある）。</summary>
+sealed class SyncProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T value) => report(value);
 }

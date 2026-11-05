@@ -332,8 +332,10 @@ public static class Ffmpeg
         string filter = layout == Layout.Crop
             ? $"{chain},crop='min(iw,ih*9/16)':'min(ih,iw*16/9)',scale=1080:1920,setsar=1"
             : $"{chain},split[a][b];" +
-              // 背景は1/4解像度でぼかしてから拡大する（見た目はほぼ同じで、等倍でぼかすより約4倍速い）
-              "[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=5:2,scale=1080:1920[bg];" +
+              // 背景は1/4解像度でぼかしてから拡大する（見た目はほぼ同じで、等倍でぼかすより約4倍速い）。
+              // ぼかしは gblur（boxblur は GPL のフィルターで、同梱の LGPL 版 FFmpeg には入っていない。
+              // sigma 5.5 が、前の boxblur=5:2 といちばん近い見た目）
+              "[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,gblur=sigma=5.5,scale=1080:1920[bg];" +
               "[b]scale=1080:1920:force_original_aspect_ratio=decrease[fg];" +
               "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1";
 

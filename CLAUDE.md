@@ -58,7 +58,9 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 - 文字: ASS を作って libass で描く。フォントは作業フォルダにコピーして `fontsdir` で渡す。ファミリー名は Windows 用の名前（`GlyphTypeface.Win32FamilyNames` の en-US）を使う（typographic な名前だと別のフォントになる）。背景あり（帯）は `BorderStyle 3`。
 - BGM: `-stream_loop` → `atrim` → `volume` →（上げたときだけ）`alimiter` → `afade`。音量は `volumedetect` で測る。
 - エンコーダー: h264_nvenc → h264_qsv → h264_amf → h264_mf → libopenh264 の順に1コマ試し書きして選ぶ（LGPL 版 FFmpeg に libx264 は無い）。
-- 同梱物: FFmpeg は BtbN の LGPL 版（安定版の最新を自動で選ぶ）。Google Fonts は google/fonts の commit `bbda7253fc363238b05d97515ca71f8ae49c4fa9` に固定した 9 書体と、その OFL。ライセンス文が配られていない書体は入れない。
+- 同梱物: FFmpeg は BtbN の LGPL 版（安定版の最新を自動で選ぶ。2026年11月は 9.0）。**LGPL 版には GPL のフィルター（boxblur など）が入っていない**ので、
+  フィルターを足すときは LGPL 版にあるか確かめる（BtbN の linux64-lgpl 版を GitHub から取ってきて `-filters` で見られる）。
+  WinCheck は、ぼかした背景・HDR・高速モード・2本つなぎも実際に作って確かめる（`CheckOtherPathsAsync`）。Google Fonts は google/fonts の commit `bbda7253fc363238b05d97515ca71f8ae49c4fa9` に固定した 9 書体と、その OFL。ライセンス文が配られていない書体は入れない。
 - 画面: 横並びの 3 列（長さ・構成 / BGM / テキスト）と、右のプレビュー欄。プレビュー枠は 9:16 で、欄の幅は高さに合わせて変える（左の設定は 890 より狭くしない）。起動時に作業領域に収める。1280×720（150% 表示のノート PC）の画面にも収まること。
 - 色（ダークモード）: .NET 10 の Fluent テーマ（`Application.ThemeMode`、試験的な機能なので csproj で WPF0001 を抑えている）。
   色は直接書かず `{DynamicResource TextFillColorSecondaryBrush}` などテーマの色を使う（プレビュー枠の黒と音量バーの緑・赤だけは固定）。
