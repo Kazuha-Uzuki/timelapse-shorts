@@ -46,7 +46,7 @@ GitHub の画面で **Releases** → **Draft a new release** → タグ欄に `v
 | `src/Ffmpeg.cs` | 変換ロジック（エンコーダー検出・間引き・冒頭移動・HDR変換・縦長化・BGM・文字入れ・プレビュー） |
 | `src/FontCatalog.cs` | フォントの一覧と、libass に渡すフォントファイル・ファミリー名（Windows 用の名前）の取得 |
 | `src/MainWindow.xaml(.cs)` | 画面。各サービスの上限が変わったら `Platforms` の数字を書き換える |
-| `tests/WinCheck` | ビルド時に Windows 上で画面を作り、同梱の ffmpeg とフォントで実際に変換して確かめるテスト |
+| `tests/WinCheck` | ビルド時に Windows 上で画面を作り、同梱の ffmpeg とフォントで実際に変換して確かめるテスト。画面は標準と最小の大きさで、部品が切れていないかも確かめる。Actions で手動実行するとき screenshots を ON にすると、画面の画像（PNG の Base64）をログに出す |
 | `.github/workflows/build.yml` | exe ビルド、LGPL版 FFmpeg と Google Fonts の同梱、テスト、zip 化 |
 | `使い方.txt` | 利用者向け説明。配布 zip には `README.txt` という名前で入る（日本語のファイル名は解凍ソフトによって文字化けするため） |
 

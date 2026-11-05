@@ -6,6 +6,11 @@ on:
   release:
     types: [published] # GitHub の画面で Release を公開したとき
   workflow_dispatch:
+    inputs:
+      screenshots:
+        description: "画面の画像をログに出す（見た目の確認用）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write # Release に zip を付けるため
@@ -80,8 +85,10 @@ jobs:
           }
           Get-ChildItem dist\fonts -Recurse -File | ForEach-Object { "{0,10:N0}  {1}" -f $_.Length, $_.Name }
 
-      - name: Windows 上で実際に変換して確かめる（BGM・テキスト・フォント）
+      - name: Windows 上で実際に変換して確かめる（画面・BGM・テキスト・フォント・プレビュー）
         shell: pwsh
+        env:
+          WINCHECK_SHOTS: ${{ inputs.screenshots && '1' || '0' }}
         run: |
           dotnet build tests/WinCheck/WinCheck.csproj -c Release -o wincheck
           Copy-Item dist\ffmpeg.exe, dist\ffprobe.exe wincheck\

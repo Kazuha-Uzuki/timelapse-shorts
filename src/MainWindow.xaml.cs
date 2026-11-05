@@ -75,6 +75,13 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // 画面の小さいノートPCでもはみ出さないよう、作業領域（タスクバーを除いた広さ）に収める
+        var area = SystemParameters.WorkArea;
+        Width = Math.Min(Width, area.Width);
+        Height = Math.Min(Height, area.Height);
+        MinWidth = Math.Min(MinWidth, Width);
+        MinHeight = Math.Min(MinHeight, Height);
+
         // 投稿先ボタン（押した状態が残り、1つだけ選べる）
         var toggleStyle = TryFindResource(typeof(ToggleButton)) as Style;
         foreach (var p in Platforms)
@@ -131,8 +138,8 @@ public partial class MainWindow : Window
         if (((FrameworkElement)sender).Tag is not Platform p) return;
         _platform = p;
         LengthHint.Text = _platform.Note == ""
-            ? $"（最大 {Fmt(_platform.MaxSeconds)}）"
-            : $"（最大 {Fmt(_platform.MaxSeconds)}。{_platform.Note}）";
+            ? $"最大 {Fmt(_platform.MaxSeconds)}"
+            : $"最大 {Fmt(_platform.MaxSeconds)}。{_platform.Note}";
         LengthBox.Text = Fmt(_platform.DefaultSeconds);
         RefreshInfo();
     }
@@ -178,7 +185,6 @@ public partial class MainWindow : Window
 
     async Task SetBgmAsync(string file)
     {
-        SettingsTabs.SelectedItem = BgmTab;
         try
         {
             _bgmSeconds = await Ffmpeg.GetAudioDurationAsync(file);
@@ -580,7 +586,7 @@ public partial class MainWindow : Window
         bool idle = !_busy;
         AddButton.IsEnabled = idle && Ffmpeg.IsAvailable;
         ClearButton.IsEnabled = idle && _files.Count > 0;
-        SettingsTabs.IsEnabled = idle; // 変換中は設定を変えられないようにする
+        SettingsPanel.IsEnabled = idle; // 変換中は設定を変えられないようにする
         IntroBox.IsEnabled = IntroCheck.IsChecked == true;
         BgmSelectButton.IsEnabled = Ffmpeg.IsAvailable;
         BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = VolumeSlider.IsEnabled = _bgmFile != null;

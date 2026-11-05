@@ -4,6 +4,8 @@ using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using TimelapseShorts;
 
@@ -15,6 +17,8 @@ static class Program
     static int _failures;
     static MainWindow? _window;        // CheckWindow で作った画面（最後にプレビューの表示も確かめる）
     static List<byte[]>? _previewPngs; // RunAsync で作ったプレビューの画
+    // 手動実行で「スクリーンショット」を ON にしたときだけ、画面の画像をログに出す（見た目の確認用）
+    static readonly bool Shots = Environment.GetEnvironmentVariable("WINCHECK_SHOTS") == "1";
 
     static void Check(string name, bool ok, string detail = "")
     {
@@ -29,7 +33,7 @@ static class Program
         CheckWindow(); // 画面は STA のこのスレッドで作る必要があるので、先に同期で確かめる
         // 変換のテストは別のスレッドで（画面を作ったスレッドで待つと止まることがあるため）
         Task.Run(() => RunAsync()).GetAwaiter().GetResult();
-        CheckPreviewWindow(); // プレビューの画ができてから、画面を作ったこのスレッドで表示を確かめる
+        CheckShownWindow(); // プレビューの画ができてから、画面を作ったこのスレッドで表示を確かめる
         Console.WriteLine(_failures == 0 ? "すべて OK" : $"NG が {_failures} 件");
         return _failures == 0 ? 0 : 1;
     }
@@ -46,17 +50,18 @@ static class Program
         T Get<T>(string field) => (T)typeof(MainWindow).GetField(field, F)!.GetValue(w)!;
         void Set(string field, object? value) => typeof(MainWindow).GetField(field, F)!.SetValue(w, value);
         void Refresh() => typeof(MainWindow).GetMethod("RefreshInfo", F)!.Invoke(w, null);
+        void Call(string method) => typeof(MainWindow).GetMethod(method, F)!.Invoke(w, null);
 
         Check("フォント一覧（★が先頭）", w.FontBox.Items.Count > 9 && w.FontBox.Items[0]!.ToString()!.StartsWith('★'),
             $"{w.FontBox.Items.Count} 個 / 先頭 {w.FontBox.Items[0]}");
         Check("色と位置の選択肢", w.ColorBox.Items.Count == 4 && w.PositionBox.Items.Count == 3);
         Check("総尺の初期値", w.LengthBox.Text == "2:59", w.LengthBox.Text);
 
-        // 1時間の動画を入れた状態にする
-        Get<List<string>>("_files").Add("dummy.mp4");
+        // 1時間の動画（スマホが2つに分けたもの）を入れた状態にする
+        Get<List<string>>("_files").AddRange([@"C:\動画\作業 2026-11-01 (1).mp4", @"C:\動画\作業 2026-11-01 (2).mp4"]);
         Set("_totalSeconds", 3600.0);
         Set("_encoder", "h264_mf");
-        Refresh();
+        Call("RefreshList");
         Check("基本の表示", w.InfoText.Text == "合計 1:00:00 → 2:59（20.1倍速）" && w.StartButton.IsEnabled
                             && w.PreviewButton.IsEnabled, w.InfoText.Text);
         Set("_encoder", null);
@@ -76,6 +81,7 @@ static class Program
 
         Set("_bgmFile", @"C:\dummy\曲.mp3");
         Set("_bgmSeconds", 120.0);
+        Call("ShowBgm");
         Refresh();
         Check("BGMあり", w.InfoText.Text.Contains("・BGMあり") && w.FadeInBox.IsEnabled, w.InfoText.Text);
         w.FadeInBox.Text = "100";
@@ -195,9 +201,10 @@ static class Program
         Check("プレビュー: 3枚・360×640", plain.Count == 3 && plain.All(p => PngSize(p) == (360, 640)),
             string.Join(" / ", plain.Select(p => $"{PngSize(p).W}×{PngSize(p).H}")) + $"（{sw.Elapsed.TotalSeconds:0.00}秒）");
         Check("プレビュー: 3枚とも違う画", plain.Select(p => Convert.ToBase64String(p)).Distinct().Count() == 3);
+        List<byte[]>? withText = null;
         if (font.File != null)
         {
-            var withText = await Render([video], total, 1,
+            withText = await Render([video], total, 1,
                 new Ffmpeg.Caption(text, font.File, font.Family, 90, "FFFFFF", "000000", Ffmpeg.TextPosition.Top));
             Check("プレビュー: 文字が入る", withText.Count == 3 && !withText[0].AsSpan().SequenceEqual(plain[0]));
         }
@@ -213,11 +220,14 @@ static class Program
         var only1 = await Render([video], total, 2, null);
         Check("プレビュー（2本）: 最初は2本目の完成品", multi[0].AsSpan().SequenceEqual(only2[0]), $"{multiSeconds:0.00}秒");
         Check("プレビュー（2本）: 真ん中は1本目", multi[1].AsSpan().SequenceEqual(only1[0]));
-        _previewPngs = plain;
+        _previewPngs = withText ?? plain;
     }
 
-    /// <summary>プレビューの画面を実際に開いて、画が入るか・2回目は同じ画面を使い回すか・閉じられるかを確かめる。</summary>
-    static void CheckPreviewWindow()
+    /// <summary>
+    /// 画面を実際に表示して、配置（切れている所がないか）を確かめる。
+    /// プレビューの画面も開いて、画が入るか・2回目は同じ画面を使い回すか・閉じられるかを確かめる。
+    /// </summary>
+    static void CheckShownWindow()
     {
         if (_window == null || _previewPngs == null)
         {
@@ -230,8 +240,20 @@ static class Program
         try
         {
             w.Show(); // 持ち主の画面が表示されていないと、プレビューの画面を開けない
+            w.UpdateLayout();
+            CheckLayout(w, 1180, 680, "標準"); // MainWindow.xaml の Width / Height
+            CheckLayout(w, 960, 650, "最小");  // MainWindow.xaml の MinWidth / MinHeight
+            ((FrameworkElement)w.Content).InvalidateMeasure();
+            w.UpdateLayout();
+
             show.Invoke(w, [_previewPngs, true]);
             var preview = Current();
+            if (preview != null)
+            {
+                preview.UpdateLayout();
+                var client = (FrameworkElement)VisualTreeHelper.GetChild(preview, 0);
+                Shot("preview", client, client.RenderSize);
+            }
             var images = (Image[])typeof(MainWindow).GetField("_previewImages", F)!.GetValue(w)!;
             var labels = (TextBlock[])typeof(MainWindow).GetField("_previewLabels", F)!.GetValue(w)!;
             Check("プレビューの画面が開く",
@@ -249,6 +271,57 @@ static class Program
         {
             Check("プレビューの画面", false, ex.ToString());
         }
+    }
+
+    /// <summary>
+    /// 画面の中身を、窓が width×height のときの大きさで並べ直し、切れている部品がないか・ボタンが画面に収まるかを確かめる。
+    /// （テスト用の PC は画面が 1024×768 で、窓をそれより大きくできないため、中身だけを並べ直す）
+    /// </summary>
+    static void CheckLayout(MainWindow w, double width, double height, string label)
+    {
+        var client = (FrameworkElement)VisualTreeHelper.GetChild(w, 0);
+        var size = new Size(width - (w.ActualWidth - client.ActualWidth), height - (w.ActualHeight - client.ActualHeight));
+        var root = (FrameworkElement)w.Content;
+        root.Measure(size);
+        root.Arrange(new Rect(size));
+        var clipped = Descendants(root).Prepend(root)
+            .Where(e => e.IsVisible && LayoutInformation.GetLayoutClip(e) != null)
+            .Select(e => !string.IsNullOrEmpty(e.Name) ? e.Name : e is TextBlock t ? $"「{t.Text}」" : e.GetType().Name)
+            .ToList();
+        var corner = w.StartButton.TranslatePoint(new Point(w.StartButton.ActualWidth, w.StartButton.ActualHeight), root);
+        bool inside = corner.X <= root.ActualWidth + 0.5 && corner.Y <= root.ActualHeight + 0.5;
+        Check($"画面の配置（{label} {width}×{height}）: 切れている所がない", clipped.Count == 0 && inside,
+            string.Join(" / ", clipped) + (inside ? "" : $" / 作成ボタンが画面の外（{corner.X:0}, {corner.Y:0}）"));
+        Shot($"main-{label}", root, size);
+    }
+
+    static IEnumerable<FrameworkElement> Descendants(DependencyObject parent)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(parent).OfType<FrameworkElement>())
+        {
+            yield return child;
+            foreach (var d in Descendants(child)) yield return d;
+        }
+    }
+
+    /// <summary>Shots のときだけ、element を size の大きさで PNG にしてログに出す（Base64 を 4000 文字ずつ「SHOT 名前 …」の行で）。</summary>
+    static void Shot(string name, FrameworkElement element, Size size)
+    {
+        if (!Shots) return;
+        const double scale = 2; // 高解像度の画面で見ても粗くならないよう 2 倍で描く
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(size.Width * scale), (int)Math.Ceiling(size.Height * scale),
+            96 * scale, 96 * scale, PixelFormats.Pbgra32);
+        var background = new DrawingVisual();
+        using (var dc = background.RenderOpen()) dc.DrawRectangle(SystemColors.WindowBrush, null, new Rect(size));
+        bitmap.Render(background);
+        bitmap.Render(element);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = new MemoryStream();
+        encoder.Save(stream);
+        string b64 = Convert.ToBase64String(stream.ToArray());
+        for (int i = 0; i < b64.Length; i += 4000)
+            Console.WriteLine($"SHOT {name} {b64.Substring(i, Math.Min(4000, b64.Length - i))}");
     }
 
     /// <summary>30秒の動画を5秒のタイムラプスにする（アプリと同じ処理）。</summary>
