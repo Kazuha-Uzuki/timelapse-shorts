@@ -502,9 +502,11 @@ public partial class MainWindow : Window
             var box = AlphaBounds(image);
             double k = 1080.0 / OverlayWidth;
             _overlayBox = box.IsEmpty ? Rect.Empty : new Rect(box.X * k, box.Y * k, box.Width * k, box.Height * k);
+            // 決まった位置（上・中央・下）は左右の真ん中ぞろえなので、横は 540 ちょうど（字の形で枠の真ん中は少しずれる）。
+            // 縦は字幕の枠の真ん中
             _overlayAnchor = caption.Position == Ffmpeg.TextPosition.Custom ? new Point(caption.X, caption.Y)
                 : _overlayBox.IsEmpty ? new Point(540, 960)
-                : new Point(Math.Round(_overlayBox.X + _overlayBox.Width / 2), Math.Round(_overlayBox.Y + _overlayBox.Height / 2));
+                : new Point(540, Math.Round(_overlayBox.Y + _overlayBox.Height / 2));
             _overlayKey = key;
             CaptionOverlay.Source = image;
             UpdateOverlayPlacement();
