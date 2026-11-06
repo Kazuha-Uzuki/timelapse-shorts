@@ -90,6 +90,10 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 - 設定画面のラジオボタンは2組あるので `GroupName` で分けている（同じパネルにあると1組として扱われる）。
 - WinCheck: CI の画面は 1024×768 なので、窓をそれより大きくするために `WM_GETMINMAXINFO` と WPF の `_trackMaxWidthDeviceUnits` などを広げている。
 
+## ⑤ のフィードバック
+
+- ⑤ のいちばん下に「ご意見・ご感想」のカード。「フィードバックを送る」で Google フォーム（`MainWindow.FeedbackUrl`）をふだんのブラウザーで開く（開けなければアドレスをコピーして知らせる）。使い方.txt にもアドレスを書いてある。フォームを変えたら両方直す
+
 ## ④ テキストの字幕の位置（重ね表示とドラッグ）
 
 - プレビュー欄の静止画は字幕なしで描き（`RenderPreviewAsync` に caption=null）、字幕だけの透明な画（`Ffmpeg.RenderCaptionAsync`。変換と同じ libass、`ass=…:alpha=1`、720×1280）を `CaptionOverlay` に重ねる。字幕の設定を変えると 150ms 待って描き直す（`ScheduleOverlay` / `RenderOverlay`）。`PreviewKey` は画に関わる設定だけ、字幕は `CaptionKey`（動画のプレビューは焼き込むので `ClipKey` に含める）

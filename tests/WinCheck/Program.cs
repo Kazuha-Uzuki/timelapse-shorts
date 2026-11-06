@@ -188,6 +188,9 @@ static class Program
         intro.MoveRange(1000);
         Call("RefreshList");
         Check("動画を入れ替えたら、範囲は「最後の ○ 秒」から選び直す", intro.Choice.End == 3600 && intro.SecondsBox.Text == "5", Range());
+        Check("⑤ フィードバックのボタン（Google フォームを開く）", w.FeedbackButton.Content as string == "フィードバックを送る"
+            && MainWindow.FeedbackUrl.StartsWith("https://docs.google.com/forms/d/e/1FAIpQLScQwEMFGRVx0QjsAopug_X9hvf_11NmBE9o8TivSNqL1xdMyQ/viewform"),
+            MainWindow.FeedbackUrl);
         Check("⑤ のまとめ（① 動画・② 冒頭・保存先）",
             w.SumVideoText.Text == "2本・合計 1:00:00・横向きは中央を切り抜く"
             && w.SumIntroText.Text == "YouTube ショート 2:59（20.1倍速）・58:19〜1:00:00 を冒頭 5 秒に・移す・フェード 0.3／0.3 秒"

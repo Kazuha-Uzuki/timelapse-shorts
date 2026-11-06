@@ -634,6 +634,19 @@
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
                             </StackPanel>
                         </Border>
+                        <!-- ご意見・ご感想（Google フォームをブラウザーで開く） -->
+                        <Border Style="{StaticResource Card}" Margin="0,8,0,0">
+                            <DockPanel>
+                                <Button x:Name="FeedbackButton" DockPanel.Dock="Right" Content="フィードバックを送る" Padding="16,5"
+                                        Margin="16,0,0,0" VerticalAlignment="Center" ToolTip="Google フォームがブラウザーで開きます"
+                                        Click="FeedbackButton_Click"/>
+                                <StackPanel>
+                                    <TextBlock Text="ご意見・ご感想" Style="{StaticResource CardTitle}"/>
+                                    <TextBlock TextWrapping="Wrap"
+                                               Text="使ってみた感想、困ったこと、ほしい機能などを教えてください。Google フォームがブラウザーで開きます。"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
                 <StackPanel Grid.Row="1" Style="{StaticResource Footer}">

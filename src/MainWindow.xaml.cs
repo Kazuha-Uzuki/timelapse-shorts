@@ -1431,6 +1431,25 @@ public partial class MainWindow : Window
 
     void OpenFolderButton_Click(object sender, RoutedEventArgs e) => OpenOutputFolder();
 
+    /// <summary>⑤ の「フィードバックを送る」で開く Google フォーム。</summary>
+    internal const string FeedbackUrl =
+        "https://docs.google.com/forms/d/e/1FAIpQLScQwEMFGRVx0QjsAopug_X9hvf_11NmBE9o8TivSNqL1xdMyQ/viewform?usp=publish-editor";
+
+    /// <summary>フィードバックの Google フォームを、ふだん使うブラウザーで開く。開けなければ、アドレスをコピーして知らせる。</summary>
+    void FeedbackButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(FeedbackUrl) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            try { Clipboard.SetText(FeedbackUrl); } catch { /* コピーできなくても、下でアドレスを見せる */ }
+            MessageBox.Show(this, "ブラウザーを開けませんでした。フォームのアドレスをコピーしたので、ブラウザーに貼り付けてください。\n\n"
+                                  + FeedbackUrl + "\n\n（" + ex.Message + "）", "フィードバック", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         _cts?.Cancel(); // 変換中に閉じたら ffmpeg も止める
