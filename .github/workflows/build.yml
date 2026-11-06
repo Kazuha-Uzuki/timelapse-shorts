@@ -36,7 +36,7 @@ jobs:
       - name: exe の名前の情報を表示（エクスプローラーのプロパティやタスクマネージャーに出る名前）
         shell: pwsh
         run: |
-          $v = (Get-Item dist\TimelapseShorts.exe).VersionInfo
+          $v = (Get-Item dist\KZHTimelapse.exe).VersionInfo
           Write-Host "製品名: $($v.ProductName) / ファイルの説明: $($v.FileDescription)"
 
       - name: LGPL版 FFmpeg を取得
@@ -107,15 +107,15 @@ jobs:
         run: |
           # 日本語のファイル名は解凍ソフトによって文字化けするので、英字の名前で入れる
           Copy-Item "使い方.txt" dist\README.txt
-          Compress-Archive dist\* TimelapseShorts-win64.zip
+          Compress-Archive dist\* KZHTimelapse-win64.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: TimelapseShorts-win64
-          path: TimelapseShorts-win64.zip
+          name: KZHTimelapse-win64
+          path: KZHTimelapse-win64.zip
 
       - name: Release に zip を付ける（Release を公開したときだけ）
         if: github.event_name == 'release'
-        run: gh release upload "$env:TAG" TimelapseShorts-win64.zip --clobber
+        run: gh release upload "$env:TAG" KZHTimelapse-win64.zip --clobber
         env:
           TAG: ${{ github.event.release.tag_name }}

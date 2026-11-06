@@ -33,12 +33,12 @@
 `main` に push すると自動でビルドされます。
 
 1. GitHub の **Actions** タブ → 最新の `build` を開く
-2. 下の **Artifacts** にある `TimelapseShorts-win64` をダウンロード
+2. 下の **Artifacts** にある `KZHTimelapse-win64` をダウンロード
 
 ### 配布用の Release を作る
 
 GitHub の画面で **Releases** → **Draft a new release** → タグ欄に `v0.1.0` のような名前を入力して新規作成 → **Publish release**。
-数分後、その Release に `TimelapseShorts-win64.zip` が自動で付きます。
+数分後、その Release に `KZHTimelapse-win64.zip` が自動で付きます。
 公開リポジトリなら GitHub のアカウントがない人もダウンロードできるので、他人に配るときはこちら。
 
 ## 構成
