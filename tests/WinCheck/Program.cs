@@ -41,6 +41,9 @@ static class Program
         // テーマ（ThemeMode）はアプリに付くので、本物と同じように Application を作っておく。
         // 窓を閉じても終わらないようにする（あとで設定の復元を確かめるため、もう一度窓を作る）
         _ = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        // 本物のアプリと同じく、画面のスレッドで await したら続きも画面のスレッドで動くようにする（Application.Run を
+        // しないので自分で入れる。入れないと、① の最初の画などの続きが別のスレッドで動き、画面に触れて落ちる）
+        SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
         // 前回の設定は、このテスト専用の場所に書く（最初は無い＝初めての起動）
         AppSettings.FilePath = Path.Combine(Path.GetTempPath(), $"wincheck-settings-{Environment.ProcessId}.json");
         File.Delete(AppSettings.FilePath);
