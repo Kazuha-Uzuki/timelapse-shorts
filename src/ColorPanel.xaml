@@ -6,7 +6,11 @@
       上の「文字の色」「フチ・帯の色」で、どちらを変えるかを切り替える。
     -->
     <UserControl.Resources>
-        <!-- R/G/B のバーは、スライダーの線を消して、後ろにその値だけを変えたときの色の変わり方を描く -->
+        <!--
+          R/G/B のバーは、スライダーの線を消して、後ろにその値だけを変えたときの色の変わり方を描く。
+          Fluent のスライダーは「0 から今の値まで」を青く塗るので、それも出さない（IsSelectionRangeEnabled にすると、
+          塗るのは SelectionStart〜SelectionEnd になり、どちらも 0 なので何も塗られない）
+        -->
         <SolidColorBrush x:Key="SliderTrackFill" Color="Transparent"/>
         <SolidColorBrush x:Key="SliderTrackFillPointerOver" Color="Transparent"/>
         <!-- 見本の色のボタン（色の四角。マウスを乗せると枠が太くなる） -->
@@ -105,7 +109,7 @@
             <Grid Grid.Column="1" Margin="8,0,0,0">
                 <Border x:Name="RTrack" Style="{StaticResource Track}"/>
                 <Slider x:Name="RSlider" Maximum="255" SmallChange="1" LargeChange="16" IsSnapToTickEnabled="True" TickFrequency="1"
-                        ValueChanged="Slider_ValueChanged"/>
+                        IsSelectionRangeEnabled="True" ValueChanged="Slider_ValueChanged"/>
             </Grid>
             <TextBox Grid.Column="2" x:Name="RBox" Style="{StaticResource ChannelBox}" TextChanged="ChannelBox_TextChanged"
                      LostFocus="Box_LostFocus"/>
@@ -114,7 +118,7 @@
             <Grid Grid.Row="1" Grid.Column="1" Margin="8,0,0,0">
                 <Border x:Name="GTrack" Style="{StaticResource Track}"/>
                 <Slider x:Name="GSlider" Maximum="255" SmallChange="1" LargeChange="16" IsSnapToTickEnabled="True" TickFrequency="1"
-                        ValueChanged="Slider_ValueChanged"/>
+                        IsSelectionRangeEnabled="True" ValueChanged="Slider_ValueChanged"/>
             </Grid>
             <TextBox Grid.Row="1" Grid.Column="2" x:Name="GBox" Style="{StaticResource ChannelBox}" TextChanged="ChannelBox_TextChanged"
                      LostFocus="Box_LostFocus"/>
@@ -123,7 +127,7 @@
             <Grid Grid.Row="2" Grid.Column="1" Margin="8,0,0,0">
                 <Border x:Name="BTrack" Style="{StaticResource Track}"/>
                 <Slider x:Name="BSlider" Maximum="255" SmallChange="1" LargeChange="16" IsSnapToTickEnabled="True" TickFrequency="1"
-                        ValueChanged="Slider_ValueChanged"/>
+                        IsSelectionRangeEnabled="True" ValueChanged="Slider_ValueChanged"/>
             </Grid>
             <TextBox Grid.Row="2" Grid.Column="2" x:Name="BBox" Style="{StaticResource ChannelBox}" TextChanged="ChannelBox_TextChanged"
                      LostFocus="Box_LostFocus"/>
