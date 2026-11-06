@@ -22,7 +22,9 @@ public sealed class AppSettings
     public string FadeOut { get; set; } = "0.5";
     public double Volume { get; set; }
     public string? Font { get; set; }              // フォントの表示名
-    public string? Color { get; set; }             // 色のセットの名前
+    public string? Color { get; set; }             // 色のセットの名前（「自由に選ぶ（RGB）」も）
+    public string? CustomTextColor { get; set; }   // 自由に選んだ文字の色（"RRGGBB"）
+    public string? CustomOutlineColor { get; set; } // 自由に選んだフチ・帯の色（"RRGGBB"）
     public int Position { get; set; }              // 0 上 / 1 中央 / 2 下
     public bool TextBack { get; set; }             // 背景あり（帯）
     public string TextSize { get; set; } = "80";

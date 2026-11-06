@@ -76,7 +76,9 @@ static class Program
 
         Check("フォント一覧（★が先頭）", w.FontBox.Items.Count > 9 && w.FontBox.Items[0]!.ToString()!.StartsWith('★'),
             $"{w.FontBox.Items.Count} 個 / 先頭 {w.FontBox.Items[0]}");
-        Check("色と位置の選択肢", w.ColorBox.Items.Count == 4 && w.PositionBox.Items.Count == 3);
+        Check("色と位置の選択肢（色は 4 つのセットと「自由に選ぶ（RGB）」）", w.ColorBox.Items.Count == 5
+            && w.ColorBox.Items[4]!.ToString() == "自由に選ぶ（RGB）" && w.PositionBox.Items.Count == 3
+            && w.CustomColorBox.Visibility == Visibility.Collapsed);
         Check("総尺の初期値", w.LengthBox.Text == "2:59", w.LengthBox.Text);
         Check("最初は ① 動画の画面", w.VideoStep.Visibility == Visibility.Visible && w.Intro.Visibility == Visibility.Collapsed
             && w.MakeStep.Visibility == Visibility.Collapsed && w.SourcePicture.Visibility == Visibility.Visible
@@ -202,6 +204,48 @@ static class Program
         Check("文字の大きさの範囲", w.InfoText.Text.StartsWith("文字の大きさ") && !w.StartButton.IsEnabled, w.InfoText.Text);
         w.SizeBox.Text = "８０"; // 全角でも読める
         Check("全角の数字", w.StartButton.IsEnabled, w.InfoText.Text);
+
+        // 色の「自由に選ぶ（RGB）」: 選ぶとパレットが出て、最初はそれまでのセットの色から始まる
+        var colors = w.CustomColors;
+        (string, string) CaptionColors() => ((string, string))typeof(MainWindow).GetMethod("CaptionColors", F)!.Invoke(w, null)!;
+        bool SampleIs(Brush? brush, string hex) => brush is SolidColorBrush { Color: var shown } && ColorPanel.Hex(shown) == hex;
+        w.ColorBox.SelectedIndex = 2; // 黄（黒フチ）
+        w.ColorBox.SelectedIndex = 4; // 自由に選ぶ（RGB）
+        Check("色を自由に選ぶ: パレットが出て、それまでのセット（黄（黒フチ））の色から始まる",
+            w.CustomColorBox.Visibility == Visibility.Visible && colors.TextColor == "FFE600" && colors.OutlineColor == "000000"
+            && colors.HexBox.Text == "FFE600" && colors.RBox.Text == "255" && colors.GBox.Text == "230" && colors.BBox.Text == "0"
+            && colors.GSlider.Value == 230, $"{colors.TextColor} / {colors.OutlineColor} / {colors.HexBox.Text}");
+        var red = colors.Swatches.Children.OfType<Button>().First(b => (string)b.ToolTip == "#FF3B30");
+        red.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+        Check("色を自由に選ぶ: 見本の色をクリックすると文字の色になり、見本・まとめ・変換に渡す色も変わる",
+            colors.TextColor == "FF3B30" && colors.OutlineColor == "000000" && SampleIs(w.SampleText.Foreground, "FF3B30")
+            && CaptionColors() == ("FF3B30", "000000") && w.SumTextText.Text.Contains("・文字 #FF3B30／フチ #000000・"),
+            w.SumTextText.Text);
+        colors.OutlineTarget.IsChecked = true; // フチ・帯の色を変える
+        colors.RBox.Text = "２８"; // 全角でも読める
+        colors.GBox.Text = "61";
+        colors.BBox.Text = "122";
+        Check("色を自由に選ぶ: フチの色を R/G/B の数値で（バーも動く）", colors.OutlineColor == "1C3D7A" && colors.TextColor == "FF3B30"
+            && colors.RSlider.Value == 28 && colors.GSlider.Value == 61 && colors.HexBox.Text == "1C3D7A" && colors.RBox.Text == "28",
+            $"{colors.TextColor} / {colors.OutlineColor}");
+        colors.GSlider.Value = 95;
+        Check("色を自由に選ぶ: バーを動かすと数値も変わる", colors.OutlineColor == "1C5F7A" && colors.GBox.Text == "95", colors.OutlineColor);
+        colors.HexBox.Text = "#ff5fa2"; // # つき・小文字でも
+        colors.RBox.Text = "300"; // 0〜255 でなければ変えない
+        Check("色を自由に選ぶ: #RRGGBB で（読めない数は無視）", colors.OutlineColor == "FF5FA2", colors.OutlineColor);
+        w.BackBoxRadio.IsChecked = true;
+        Check("色を自由に選ぶ: 背景ありなら、フチの色が帯の色", w.SumTextText.Text.Contains("・文字 #FF3B30／帯 #FF5FA2・")
+            && SampleIs(w.SampleBorder.Background, "FF5FA2"), w.SumTextText.Text);
+        w.BackNoneRadio.IsChecked = true;
+        w.ColorBox.SelectedIndex = 0;
+        Check("色を自由に選ぶ: セットに戻すとパレットは隠れ、セットの色になる", w.CustomColorBox.Visibility == Visibility.Collapsed
+            && SampleIs(w.SampleText.Foreground, "FFFFFF") && CaptionColors() == ("FFFFFF", "000000"));
+        w.ColorBox.SelectedIndex = 4;
+        Check("色を自由に選ぶ: もう一度選ぶと、自分で選んだ色のまま", colors.TextColor == "FF3B30" && colors.OutlineColor == "FF5FA2"
+            && w.CustomColorBox.Visibility == Visibility.Visible);
+        colors.TextTarget.IsChecked = true;
+        Check("色を自由に選ぶ: ASS（字幕）の色は 青緑赤 の順", Ffmpeg.BuildAss(new Ffmpeg.Caption("あ", "", "Arial", 80, "FF3B30", "FF5FA2",
+            Ffmpeg.TextPosition.Top), 5).Contains(",&H00303BFF,&H000000FF,&H00A25FFF,"));
 
         Set("_bgmFile", @"C:\dummy\曲.mp3");
         Set("_bgmSeconds", 120.0);
@@ -724,7 +768,7 @@ static class Program
             w.FadeInBox.Text = "2";
             w.VolumeSlider.Value = -4;
             w.FontBox.SelectedIndex = 1;
-            w.ColorBox.SelectedIndex = 2;
+            w.ColorBox.SelectedIndex = 4; // 自由に選ぶ（RGB）。色は CheckWindow で選んだ 文字 FF3B30・フチ FF5FA2
             w.PositionBox.SelectedIndex = 2;
             w.BackBoxRadio.IsChecked = true;
             w.SizeBox.Text = "100";
@@ -945,7 +989,10 @@ static class Program
             // 冒頭の秒数・持っていきかた・フェードは覚える。範囲は動画ごとなので覚えない
             && w.Intro.Choice is { Enabled: true, Seconds: "7", Copy: true, FadeIn: "0.5", FadeOut: "0.3", HasRange: false }
             && w.FadeInBox.Text == "2" && w.FadeOutBox.Text == "３" && w.VolumeSlider.Value == -4
-            && w.FontBox.SelectedItem?.ToString() == font && w.ColorBox.SelectedIndex == 2 && w.PositionBox.SelectedIndex == 2
+            && w.FontBox.SelectedItem?.ToString() == font && w.PositionBox.SelectedIndex == 2
+            // 色は「自由に選ぶ（RGB）」と、選んだ 2 色に戻る
+            && w.ColorBox.SelectedIndex == 4 && w.CustomColorBox.Visibility == Visibility.Visible
+            && w.CustomColors.TextColor == "FF3B30" && w.CustomColors.OutlineColor == "FF5FA2"
             && w.BackBoxRadio.IsChecked == true && w.SizeBox.Text == "100",
             File.ReadAllText(AppSettings.FilePath).ReplaceLineEndings(" "));
         Check("前回の色（ダーク）で開く", Application.Current.ThemeMode == ThemeMode.Dark && Luminance(w.Background) < 0.2,

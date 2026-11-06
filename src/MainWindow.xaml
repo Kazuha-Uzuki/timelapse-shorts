@@ -478,8 +478,8 @@
                                            Text="★は同梱の Google Fonts、ほかはこの PC のフォント"/>
                                 <TextBlock Grid.Row="2" Text="色" Margin="0,8,0,0" VerticalAlignment="Center"/>
                                 <WrapPanel Grid.Row="2" Grid.Column="1" Margin="12,8,0,0">
-                                    <ComboBox x:Name="ColorBox" Width="170" Margin="0,0,24,0" VerticalAlignment="Center"
-                                              SelectionChanged="Settings_SelectionChanged"/>
+                                    <ComboBox x:Name="ColorBox" Width="190" Margin="0,0,24,0" VerticalAlignment="Center"
+                                              SelectionChanged="ColorBox_SelectionChanged"/>
                                     <!-- 背景なし: フチ取りの文字だけ / 背景あり: フチの色の帯の上に文字 -->
                                     <TextBlock Text="背景" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                     <RadioButton x:Name="BackNoneRadio" Content="なし" IsChecked="True" VerticalAlignment="Center"
@@ -487,8 +487,14 @@
                                     <RadioButton x:Name="BackBoxRadio" Content="あり（帯）" Margin="16,0,0,0" VerticalAlignment="Center"
                                                  Checked="Settings_Changed"/>
                                 </WrapPanel>
-                                <TextBlock Grid.Row="3" Text="大きさ" Margin="0,8,0,0" VerticalAlignment="Center"/>
-                                <WrapPanel Grid.Row="3" Grid.Column="1" Margin="12,8,0,0">
+                                <!-- 色の「自由に選ぶ（RGB）」のときだけ出るパレット -->
+                                <Border Grid.Row="3" Grid.Column="1" x:Name="CustomColorBox" Margin="12,8,0,0" Padding="12,8,12,8"
+                                        CornerRadius="6" Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                        BorderThickness="1" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" Visibility="Collapsed">
+                                    <local:ColorPanel x:Name="CustomColors"/>
+                                </Border>
+                                <TextBlock Grid.Row="4" Text="大きさ" Margin="0,8,0,0" VerticalAlignment="Center"/>
+                                <WrapPanel Grid.Row="4" Grid.Column="1" Margin="12,8,0,0">
                                     <TextBox x:Name="SizeBox" Text="80" Width="56" Padding="2"
                                              VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
                                     <TextBlock Style="{StaticResource Note}" VerticalAlignment="Center" Margin="8,0,24,0"

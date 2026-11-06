@@ -12,6 +12,7 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 | `src/MainWindow.xaml(.cs)` | 画面。上の手順のボタン（① 動画 ▶ ② 冒頭 ▶ ③ BGM ▶ ④ テキスト ▶ ⑤ 作成）で画面を切り替える（`ShowStep`）。左に 9:16 の画（① は元の動画の最初、③④⑤ は出来上がりのプレビュー）、右に設定のカード。投稿先の上限は `Platforms`（2026年10月時点の値） |
 | `src/SettingsWindow.xaml(.cs)` | 「設定」の小さな画面（画面の色・保存先・作成が終わったとき）と、テーマを切り替える `ApplyTheme` |
 | `src/IntroPanel.xaml(.cs)` | ② 冒頭（元の動画・秒数⇄範囲の連動・移す／コピー・フェード・2 本のバー）と、覚える内容 `IntroChoice`。「長さ・投稿先」のカードと「戻る／次へ」は MainWindow.xaml の `IntroParts` に書き、MainWindow のコンストラクターで `LengthContent` / `FooterContent` へ移す（XAML で作った UserControl の中身に名前付きの部品を書くと MC3093 になるため。名前は MainWindow のもの） |
+| `src/ColorPanel.xaml(.cs)` | ④ テキストの「自由に選ぶ（RGB）」のパレット。文字の色とフチ・帯の色（"RRGGBB"）を、見本の色・R/G/B（バーと数値）・#RRGGBB で選ぶ。MainWindow は色の欄で「自由に選ぶ」を選んだときだけ出し、`CaptionColors()` で変換・見本・まとめに使う |
 | `src/RangeBar.cs` | ② の横長のバー（目盛り・選んだ範囲・今の位置）。ドラッグで範囲を選ぶ・範囲ごとずらす・両端の調整。どう動かしたかを知らせるだけで、長さは IntroPanel が決める |
 | `src/SleepWindow.xaml(.cs)` | 「終わったら PC をスリープ」の 60 秒のお知らせ（true を返したら呼んだ側が `SetSuspendState`） |
 | `src/AppSettings.cs` | 前回の設定（`%LOCALAPPDATA%\TimelapseShorts\settings.json`）。閉じるときと設定画面を閉じたときに書く |

@@ -32,6 +32,9 @@ public partial class MainWindow : Window
         new("ピンク（白フチ）", "FF5FA2", "FFFFFF"),
     ];
 
+    // 色の欄の最後の「自由に選ぶ（RGB）」。選ぶと、その下のパレット（ColorPanel）で文字とフチ・帯の色を選べる
+    static readonly ColorPreset CustomColor = new("自由に選ぶ（RGB）", "", "");
+
     static readonly string[] Positions = ["上", "中央", "下"]; // Ffmpeg.TextPosition と同じ並び
 
     /// <summary>入力欄から読み取った設定。</summary>
@@ -73,6 +76,7 @@ public partial class MainWindow : Window
     bool _clipPaused, _clipEnded;               // 一時停止中か・最後まで見たか
     readonly AppSettings _settings = AppSettings.Load(); // 前回の設定（閉じるときに今の設定を書く）
     int _step;                                  // 今の手順（0 ① 動画 … 4 ⑤ 作成）
+    bool _customColorsSet;                      // パレット（自由に選ぶ）に色が入っている（選んだ・覚えていた・セットから写した）
     bool _clipRendering;                        // 動画のプレビューを作っている最中（「動画で見る」が「やめる」になる）
     int _sourceVersion;                         // 動画を入れ替えた回数（① の最初の画の読み込みが古くないか）
 
@@ -131,8 +135,13 @@ public partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = "フォントの一覧を読み込めませんでした: " + ex.Message; }
         Intro.Changed += RefreshInfo;
         FontBox.SelectedIndex = 0;
-        ColorBox.ItemsSource = ColorPresets;
+        ColorBox.ItemsSource = ColorPresets.Append(CustomColor).ToList();
         ColorBox.SelectedIndex = 0;
+        CustomColors.Changed += () =>
+        {
+            _customColorsSet = true;
+            RefreshInfo();
+        };
         PositionBox.ItemsSource = Positions;
         PositionBox.SelectedIndex = 0;
         ShowBgm();
@@ -170,7 +179,13 @@ public partial class MainWindow : Window
         FadeOutBox.Text = a.FadeOut;
         VolumeSlider.Value = Math.Clamp(a.Volume, VolumeSlider.Minimum, VolumeSlider.Maximum);
         if (FontBox.Items.OfType<FontCatalog.Item>().FirstOrDefault(f => f.Display == a.Font) is { } font) FontBox.SelectedItem = font;
-        if (ColorPresets.FirstOrDefault(c => c.Name == a.Color) is { } color) ColorBox.SelectedItem = color;
+        if (ColorPanel.Parse(a.CustomTextColor) != null && ColorPanel.Parse(a.CustomOutlineColor) != null)
+        {
+            CustomColors.SetColors(a.CustomTextColor, a.CustomOutlineColor);
+            _customColorsSet = true;
+        }
+        if (a.Color == CustomColor.Name) ColorBox.SelectedItem = CustomColor;
+        else if (ColorPresets.FirstOrDefault(c => c.Name == a.Color) is { } color) ColorBox.SelectedItem = color;
         PositionBox.SelectedIndex = Math.Clamp(a.Position, 0, Positions.Length - 1);
         (a.TextBack ? BackBoxRadio : BackNoneRadio).IsChecked = true;
         SizeBox.Text = a.TextSize;
@@ -194,6 +209,7 @@ public partial class MainWindow : Window
         a.Volume = VolumeSlider.Value;
         a.Font = (FontBox.SelectedItem as FontCatalog.Item)?.Display;
         a.Color = (ColorBox.SelectedItem as ColorPreset)?.Name;
+        if (_customColorsSet) (a.CustomTextColor, a.CustomOutlineColor) = (CustomColors.TextColor, CustomColors.OutlineColor);
         a.Position = PositionBox.SelectedIndex;
         a.TextBack = BackBoxRadio.IsChecked == true;
         a.TextSize = SizeBox.Text;
@@ -321,6 +337,37 @@ public partial class MainWindow : Window
     void Settings_Changed(object sender, RoutedEventArgs e) => RefreshInfo();
 
     void Settings_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshInfo();
+
+    /// <summary>
+    /// 色のセットを変えた。「自由に選ぶ（RGB）」ならパレットを出す（パレットにまだ色が無ければ、それまでのセットの色から始める）。
+    /// </summary>
+    void ColorBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        bool custom = ReferenceEquals(ColorBox.SelectedItem, CustomColor);
+        if (custom && !_customColorsSet && e.RemovedItems.OfType<ColorPreset>().FirstOrDefault() is { } from && from != CustomColor)
+        {
+            CustomColors.SetColors(from.Text, from.Outline);
+            _customColorsSet = true;
+        }
+        CustomColorBox.Visibility = custom ? Visibility.Visible : Visibility.Collapsed;
+        RefreshInfo();
+    }
+
+    /// <summary>文字の色とフチ（背景ありなら帯）の色（"RRGGBB"）。「自由に選ぶ（RGB）」ならパレットの色。</summary>
+    (string Text, string Outline) CaptionColors()
+    {
+        if (ReferenceEquals(ColorBox.SelectedItem, CustomColor)) return (CustomColors.TextColor, CustomColors.OutlineColor);
+        var preset = ColorBox.SelectedItem as ColorPreset ?? ColorPresets[0];
+        return (preset.Text, preset.Outline);
+    }
+
+    /// <summary>⑤ のまとめに出す色（セットの名前か、自由に選んだ 2 色）。</summary>
+    string ColorLabel()
+    {
+        if (!ReferenceEquals(ColorBox.SelectedItem, CustomColor)) return ColorBox.SelectedItem?.ToString() ?? "";
+        var (text, outline) = CaptionColors();
+        return $"文字 #{text}／{(BackBoxRadio.IsChecked == true ? "帯" : "フチ")} #{outline}";
+    }
 
     void Window_DragOver(object sender, DragEventArgs e)
     {
@@ -610,7 +657,7 @@ public partial class MainWindow : Window
             : $"♪ {System.IO.Path.GetFileName(_bgmFile)}（{Fmt(_bgmSeconds)}）・{VolumeText.Text}・フェード {FadeInBox.Text}／{FadeOutBox.Text} 秒";
         string firstLine = CaptionBox.Text.Trim().Split('\n')[0].Trim();
         SumTextText.Text = TextCheck.IsChecked != true ? "なし"
-            : $"{(firstLine == "" ? "（まだ入れていません）" : firstLine)}・{FontBox.SelectedItem}・{ColorBox.SelectedItem}・{SizeBox.Text}"
+            : $"{(firstLine == "" ? "（まだ入れていません）" : firstLine)}・{FontBox.SelectedItem}・{ColorLabel()}・{SizeBox.Text}"
               + $"・{PositionBox.SelectedItem}" + (BackBoxRadio.IsChecked == true ? "・帯あり" : "");
         string name = _files.Count == 0 ? "（元の動画の名前）" : System.IO.Path.GetFileNameWithoutExtension(_files[0]);
         string file = $"「{name}_{_platform.Key}.mp4」";
@@ -637,15 +684,13 @@ public partial class MainWindow : Window
     {
         if (FontBox.SelectedItem is FontCatalog.Item font) SampleText.FontFamily = font.Family;
         SampleText.Text = string.IsNullOrWhiteSpace(CaptionBox.Text) ? "ここに見本が出ます" : CaptionBox.Text.Trim();
-        if (ColorBox.SelectedItem is ColorPreset c)
-        {
-            var text = (Color)ColorConverter.ConvertFromString("#" + c.Text);
-            var outline = (Color)ColorConverter.ConvertFromString("#" + c.Outline);
-            SampleText.Foreground = new SolidColorBrush(text);
-            bool box = BackBoxRadio.IsChecked == true;
-            SampleBorder.Background = box ? new SolidColorBrush(outline) : SampleVideo;
-            SampleText.Effect = box ? null : new DropShadowEffect { Color = outline, ShadowDepth = 0, BlurRadius = 5, Opacity = 1 };
-        }
+        var colors = CaptionColors();
+        var text = (Color)ColorConverter.ConvertFromString("#" + colors.Text);
+        var outline = (Color)ColorConverter.ConvertFromString("#" + colors.Outline);
+        SampleText.Foreground = new SolidColorBrush(text);
+        bool box = BackBoxRadio.IsChecked == true;
+        SampleBorder.Background = box ? new SolidColorBrush(outline) : SampleVideo;
+        SampleText.Effect = box ? null : new DropShadowEffect { Color = outline, ShadowDepth = 0, BlurRadius = 5, Opacity = 1 };
         SampleBorder.Opacity = TextCheck.IsChecked == true ? 1 : 0.4;
     }
 
@@ -660,7 +705,7 @@ public partial class MainWindow : Window
                 $"フォント「{font.Display}」には次の文字がありません。四角や空白で表示されます。\n\n{missing}\n\nこのまま{action}しますか？",
                 "フォントの確認", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return false;
-        var color = ColorPresets[Math.Max(0, ColorBox.SelectedIndex)];
+        var color = CaptionColors();
         caption = new Ffmpeg.Caption(text, file, family, s.TextSize, color.Text, color.Outline,
             (Ffmpeg.TextPosition)Math.Max(0, PositionBox.SelectedIndex), BackBoxRadio.IsChecked == true);
         return true;
@@ -1006,7 +1051,7 @@ public partial class MainWindow : Window
     /// <summary>画の見た目に関わる設定をまとめた文字列（BGM と完成品のフェードは静止画に出ないので含めない）。</summary>
     string PreviewKey() => string.Join("|", string.Join(";", _files), LengthBox.Text,
         Intro.Choice with { FadeIn = "", FadeOut = "" },
-        BlurRadio.IsChecked, TextCheck.IsChecked, CaptionBox.Text, FontBox.SelectedIndex, ColorBox.SelectedIndex,
+        BlurRadio.IsChecked, TextCheck.IsChecked, CaptionBox.Text, FontBox.SelectedIndex, CaptionColors(),
         BackBoxRadio.IsChecked, SizeBox.Text, PositionBox.SelectedIndex);
 
     /// <summary>
@@ -1065,7 +1110,7 @@ public partial class MainWindow : Window
         VideoStep.IsEnabled = Intro.IsEnabled = BgmStep.IsEnabled = TextStep.IsEnabled = idle;
         BgmSelectButton.IsEnabled = Ffmpeg.IsAvailable;
         BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = VolumeSlider.IsEnabled = _bgmFile != null;
-        CaptionBox.IsEnabled = FontBox.IsEnabled = SizeBox.IsEnabled = ColorBox.IsEnabled = PositionBox.IsEnabled
+        CaptionBox.IsEnabled = FontBox.IsEnabled = SizeBox.IsEnabled = ColorBox.IsEnabled = CustomColors.IsEnabled = PositionBox.IsEnabled
             = BackNoneRadio.IsEnabled = BackBoxRadio.IsEnabled = TextCheck.IsChecked == true;
         bool valid = _files.Count > 0 && _totalSeconds > 0 && Validate(out _) == null;
         PreviewButton.IsEnabled = idle && valid; // プレビューは画像を作るだけなので、エンコーダーは要らない

@@ -24,6 +24,8 @@
     <Compile Include="../../src/SleepWindow.xaml.cs" Link="SleepWindow.xaml.cs" />
     <Page Include="../../src/IntroPanel.xaml" Link="IntroPanel.xaml" />
     <Compile Include="../../src/IntroPanel.xaml.cs" Link="IntroPanel.xaml.cs" />
+    <Page Include="../../src/ColorPanel.xaml" Link="ColorPanel.xaml" />
+    <Compile Include="../../src/ColorPanel.xaml.cs" Link="ColorPanel.xaml.cs" />
     <Compile Include="../../src/RangeBar.cs" />
   </ItemGroup>
 
