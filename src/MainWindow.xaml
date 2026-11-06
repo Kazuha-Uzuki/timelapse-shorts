@@ -157,8 +157,11 @@
                 </Grid.RowDefinitions>
                 <Border x:Name="PreviewHolder" SizeChanged="PictureHolder_SizeChanged">
                     <!-- 動画のプレビューを出しているときは、クリックで一時停止・続き・もう一度 -->
+                    <!-- ④ では、字幕をドラッグして好きな位置に動かせる（MouseLeftButtonDown / MouseMove / MouseLeftButtonUp） -->
                     <Border x:Name="PreviewFrame" Background="#1e1e1e" Width="268" Height="476"
-                            HorizontalAlignment="Left" VerticalAlignment="Top" MouseLeftButtonUp="PreviewFrame_MouseLeftButtonUp">
+                            HorizontalAlignment="Left" VerticalAlignment="Top" MouseLeftButtonDown="PreviewFrame_MouseLeftButtonDown"
+                            MouseMove="PreviewFrame_MouseMove" MouseLeftButtonUp="PreviewFrame_MouseLeftButtonUp"
+                            LostMouseCapture="PreviewFrame_LostMouseCapture">
                         <Grid>
                             <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                             <!-- 動画のプレビュー（最初の数秒・BGM 入り）。音量は PC の音量のまま（BGM の大きさを確かめるため） -->
@@ -172,6 +175,25 @@
                                 <Button x:Name="PreviewOpenButton" Content="ほかのアプリで開く" Padding="12,4" Margin="0,12,0,0"
                                         HorizontalAlignment="Center" Visibility="Collapsed" Click="PreviewOpenButton_Click"/>
                             </StackPanel>
+                            <!--
+                              字幕だけの画（透明。Ffmpeg.RenderCaptionAsync で変換と同じ libass で描く）を、画に重ねて出す。
+                              設定を変えるとすぐ描き直す。④ ではドラッグで動かせる（動かしている間は CaptionShift でずらす）
+                            -->
+                            <Image x:Name="CaptionOverlay" Stretch="Fill" IsHitTestVisible="False" Visibility="Collapsed"
+                                   RenderOptions.BitmapScalingMode="HighQuality">
+                                <Image.RenderTransform>
+                                    <TranslateTransform x:Name="CaptionShift"/>
+                                </Image.RenderTransform>
+                            </Image>
+                            <!-- ドラッグ中の目安: 字幕の枠・位置、真ん中にぴったり合ったときの線 -->
+                            <Canvas x:Name="CaptionGuides" IsHitTestVisible="False" Visibility="Collapsed">
+                                <Line x:Name="GuideV" Stroke="#FF39C5F0" StrokeThickness="1.5" StrokeDashArray="5 3"/>
+                                <Line x:Name="GuideH" Stroke="#FF39C5F0" StrokeThickness="1.5" StrokeDashArray="5 3"/>
+                                <Rectangle x:Name="CaptionFrame" Stroke="#E6FFFFFF" StrokeThickness="1" StrokeDashArray="4 2"/>
+                                <Border x:Name="CaptionPosLabel" Background="#C8000000" CornerRadius="3" Padding="6,2">
+                                    <TextBlock x:Name="CaptionPosText" Foreground="White" FontSize="12"/>
+                                </Border>
+                            </Canvas>
                             <!-- 動画を止めたとき・最後まで見たとき -->
                             <Border x:Name="PreviewReplay" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="16,8"
                                     CornerRadius="20" Background="#B0000000" Visibility="Collapsed" IsHitTestVisible="False">
@@ -471,6 +493,8 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
                                 <TextBlock Text="フォント" VerticalAlignment="Center"/>
                                 <ComboBox Grid.Column="1" x:Name="FontBox" Margin="12,0,0,0" SelectionChanged="Settings_SelectionChanged"/>
@@ -497,11 +521,27 @@
                                 <WrapPanel Grid.Row="4" Grid.Column="1" Margin="12,8,0,0">
                                     <TextBox x:Name="SizeBox" Text="80" Width="56" Padding="2"
                                              VerticalAlignment="Center" TextChanged="Settings_TextChanged"/>
-                                    <TextBlock Style="{StaticResource Note}" VerticalAlignment="Center" Margin="8,0,24,0"
+                                    <TextBlock Style="{StaticResource Note}" VerticalAlignment="Center" Margin="8,0,0,0"
                                                Text="文字の高さ（横幅 1080 に対して。目安 60〜120）"/>
-                                    <TextBlock Text="位置" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                    <ComboBox x:Name="PositionBox" Width="90" VerticalAlignment="Center" SelectionChanged="Settings_SelectionChanged"/>
                                 </WrapPanel>
+                                <TextBlock Grid.Row="5" Text="位置" Margin="0,8,0,0" VerticalAlignment="Center"/>
+                                <WrapPanel Grid.Row="5" Grid.Column="1" Margin="12,8,0,0">
+                                    <ComboBox x:Name="PositionBox" Width="150" VerticalAlignment="Center"
+                                              SelectionChanged="PositionBox_SelectionChanged"/>
+                                    <!-- 「自由（ドラッグ）」のときだけ。字幕の真ん中の位置（出来上がりの 横 1080 × 縦 1920 の中） -->
+                                    <StackPanel x:Name="PositionXY" Orientation="Horizontal" Margin="16,0,0,0" Visibility="Collapsed">
+                                        <TextBlock Text="X" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                        <TextBox x:Name="TextXBox" Width="64" Padding="2" VerticalAlignment="Center"
+                                                 TextChanged="PositionXY_TextChanged"/>
+                                        <TextBlock Text="Y" FontWeight="Bold" VerticalAlignment="Center" Margin="14,0,6,0"/>
+                                        <TextBox x:Name="TextYBox" Width="64" Padding="2" VerticalAlignment="Center"
+                                                 TextChanged="PositionXY_TextChanged"/>
+                                        <TextBlock Style="{StaticResource Note}" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                   Text="（横 0〜1080・縦 0〜1920。字幕の真ん中の位置）"/>
+                                    </StackPanel>
+                                </WrapPanel>
+                                <TextBlock Grid.Row="6" Grid.Column="1" Style="{StaticResource Note}" Margin="12,4,0,0"
+                                           Text="左のプレビューの字幕は、ドラッグで好きな位置に動かせます（位置が「自由」になります）。真ん中に近づけると、ぴったり真ん中に合います"/>
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource Card}" Margin="0,8,0,0">
@@ -512,7 +552,7 @@
                                     <TextBlock x:Name="SampleText" FontSize="22" TextWrapping="Wrap" TextAlignment="Center"/>
                                 </Border>
                                 <TextBlock Style="{StaticResource Note}" Margin="0,4,0,0"
-                                           Text="見本はおおよその見た目です。出来上がりと同じ見た目は、左の「プレビュー」で確かめられます。"/>
+                                           Text="見本はおおよその見た目です。左のプレビューには、出来上がりと同じ字幕が重ねて出ます（設定を変えると、すぐ変わります）。"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>

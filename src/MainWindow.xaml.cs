@@ -6,9 +6,11 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
 namespace TimelapseShorts;
@@ -35,7 +37,7 @@ public partial class MainWindow : Window
     // 色の欄の最後の「自由に選ぶ（RGB）」。選ぶと、その下のパレット（ColorPanel）で文字とフチ・帯の色を選べる
     static readonly ColorPreset CustomColor = new("自由に選ぶ（RGB）", "", "");
 
-    static readonly string[] Positions = ["上", "中央", "下"]; // Ffmpeg.TextPosition と同じ並び
+    static readonly string[] Positions = ["上", "中央", "下", "自由（ドラッグ）"]; // Ffmpeg.TextPosition と同じ並び
 
     /// <summary>入力欄から読み取った設定。</summary>
     sealed record Settings(int Target, Ffmpeg.Intro? Intro, double FadeIn, double FadeOut, int TextSize);
@@ -77,6 +79,21 @@ public partial class MainWindow : Window
     readonly AppSettings _settings = AppSettings.Load(); // 前回の設定（閉じるときに今の設定を書く）
     int _step;                                  // 今の手順（0 ① 動画 … 4 ⑤ 作成）
     bool _customColorsSet;                      // パレット（自由に選ぶ）に色が入っている（選んだ・覚えていた・セットから写した）
+    bool _restoring;                            // 前回の設定を戻している最中（位置を「自由」にしても、X/Y を今の位置で上書きしない）
+    bool _settingXY;                            // 字幕の X/Y の欄を、ドラッグなどでこちらから書き換えている最中
+
+    // ---- 字幕の重ね表示とドラッグ（プレビュー欄） ----
+    // プレビューの画は字幕なしで描き、字幕だけの透明な画（変換と同じ libass で描く）を重ねる。字幕の設定を変えると
+    // 少し待ってから描き直す。位置だけの変更（自由な位置）は描き直さず、描いたときの位置からずらして見せる
+    readonly DispatcherTimer _overlayTimer = new() { Interval = TimeSpan.FromMilliseconds(150) };
+    int _overlayVersion;                        // 字幕の画を頼んだ回数（古い描画の結果を捨てる）
+    string? _overlayKey;                        // 今の字幕の画を描いたときの見た目（文字・フォント・色・大きさ・帯・位置の決め方）
+    Point _overlayAnchor;                       // その画を描いたときの字幕の位置（自由なら X/Y、決まった位置なら字幕の枠の真ん中）
+    Rect _overlayBox = Rect.Empty;              // その画の中で字幕が描かれている枠。どれも出来上がりの 1080×1920 の中の位置
+    Point? _dragStart;                          // 字幕のドラッグを始めた所（プレビュー欄の中）。ドラッグしていなければ null
+    Point _dragFrom;                            // ドラッグを始めたときの字幕の位置（1080×1920 の中）
+    const int OverlayWidth = 720, OverlayHeight = 1280; // 字幕の画の大きさ（出来上がりの 2/3。枠は 300 くらいなので十分）
+    const double SnapDistance = 16;             // 真ん中にこれだけ（1080×1920 の中で）近づけたら、ぴったり真ん中にする
     bool _clipRendering;                        // 動画のプレビューを作っている最中（「動画で見る」が「やめる」になる）
     int _sourceVersion;                         // 動画を入れ替えた回数（① の最初の画の読み込みが古くないか）
 
@@ -144,6 +161,9 @@ public partial class MainWindow : Window
         };
         PositionBox.ItemsSource = Positions;
         PositionBox.SelectedIndex = 0;
+        TextXBox.Text = "540";
+        TextYBox.Text = "960";
+        _overlayTimer.Tick += (_, _) => RenderOverlay();
         ShowBgm();
 
         _ready = true;
@@ -186,7 +206,11 @@ public partial class MainWindow : Window
         }
         if (a.Color == CustomColor.Name) ColorBox.SelectedItem = CustomColor;
         else if (ColorPresets.FirstOrDefault(c => c.Name == a.Color) is { } color) ColorBox.SelectedItem = color;
+        TextXBox.Text = a.TextX;
+        TextYBox.Text = a.TextY;
+        _restoring = true;
         PositionBox.SelectedIndex = Math.Clamp(a.Position, 0, Positions.Length - 1);
+        _restoring = false;
         (a.TextBack ? BackBoxRadio : BackNoneRadio).IsChecked = true;
         SizeBox.Text = a.TextSize;
     }
@@ -211,6 +235,8 @@ public partial class MainWindow : Window
         a.Color = (ColorBox.SelectedItem as ColorPreset)?.Name;
         if (_customColorsSet) (a.CustomTextColor, a.CustomOutlineColor) = (CustomColors.TextColor, CustomColors.OutlineColor);
         a.Position = PositionBox.SelectedIndex;
+        a.TextX = TextXBox.Text;
+        a.TextY = TextYBox.Text;
         a.TextBack = BackBoxRadio.IsChecked == true;
         a.TextSize = SizeBox.Text;
         a.Save();
@@ -303,6 +329,7 @@ public partial class MainWindow : Window
         if (Math.Abs(PictureColumn.Width.Value - width) > 0.5) PictureColumn.Width = new GridLength(width);
         frame.Width = width;
         frame.Height = width * 16 / 9;
+        if (frame == PreviewFrame) UpdateOverlayPlacement(); // 字幕のずらしかたは、枠の大きさで変わる
     }
 
     async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -360,6 +387,311 @@ public partial class MainWindow : Window
         var preset = ColorBox.SelectedItem as ColorPreset ?? ColorPresets[0];
         return (preset.Text, preset.Outline);
     }
+
+    // ---- 字幕の位置（上・中央・下・自由）と、プレビュー欄での重ね表示・ドラッグ ----
+
+    bool CustomPosition => PositionBox.SelectedIndex == (int)Ffmpeg.TextPosition.Custom;
+
+    /// <summary>自由な位置（X/Y の欄。字幕の真ん中の位置）。0〜1080・0〜1920 の数で読めなければ false。全角でも読める。</summary>
+    bool TryGetTextXY(out double x, out double y)
+    {
+        y = 0;
+        return TryParseNumber(TextXBox.Text, out x) && TryParseNumber(TextYBox.Text, out y)
+               && x is >= 0 and <= 1080 && y is >= 0 and <= 1920;
+    }
+
+    /// <summary>⑤ のまとめに出す位置（「上」や「自由（X 540・Y 1500）」）。</summary>
+    string PositionLabel() => CustomPosition ? $"自由（X {TextXBox.Text.Trim()}・Y {TextYBox.Text.Trim()}）" : PositionBox.SelectedItem?.ToString() ?? "";
+
+    /// <summary>
+    /// 位置を変えた。「自由」なら X/Y の欄を出す。決まった位置から「自由」にしたときは、X/Y を今の字幕の位置から始める
+    /// （字幕の画があればその真ん中、無ければ決まった位置のおおよその所）。
+    /// </summary>
+    void PositionBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        PositionXY.Visibility = CustomPosition ? Visibility.Visible : Visibility.Collapsed;
+        if (_ready && !_restoring && CustomPosition && e.RemovedItems.Count > 0 && _dragStart == null)
+        {
+            int from = Array.IndexOf(Positions, e.RemovedItems[0] as string);
+            if (from is >= 0 and < 3) SetTextXY(PresetCaptionCenter(from), refresh: false);
+        }
+        RefreshInfo();
+    }
+
+    /// <summary>決まった位置（0 上・1 中央・2 下）の字幕の真ん中。描いた字幕の画があればそれから、無ければおおよそ。</summary>
+    Point PresetCaptionCenter(int preset)
+    {
+        if (!_overlayBox.IsEmpty && _overlayKey != null && !_overlayKey.EndsWith("|Custom")) return _overlayAnchor;
+        double half = TryParseSeconds(SizeBox.Text, out int size) ? size * 0.6 : 48;
+        return new Point(540, preset switch { 0 => 280 + half, 1 => 960, _ => 1320 - half }); // Ffmpeg.BuildAss の余白から
+    }
+
+    void PositionXY_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_ready || _settingXY) return;
+        RefreshInfo();
+    }
+
+    /// <summary>X/Y の欄に位置を書く（ドラッグなど。打った値と同じように扱う）。</summary>
+    void SetTextXY(Point p, bool refresh = true)
+    {
+        _settingXY = true;
+        TextXBox.Text = Math.Round(p.X).ToString(CultureInfo.InvariantCulture);
+        TextYBox.Text = Math.Round(p.Y).ToString(CultureInfo.InvariantCulture);
+        _settingXY = false;
+        if (refresh) RefreshInfo();
+    }
+
+    /// <summary>重ねて出す字幕（今の設定）。入れない・まだ読めない設定なら null（フォントに無い文字があっても聞かない）。</summary>
+    Ffmpeg.Caption? OverlayCaption()
+    {
+        if (TextCheck.IsChecked != true || string.IsNullOrWhiteSpace(CaptionBox.Text) || FontBox.SelectedItem is not FontCatalog.Item font
+            || !TryParseSeconds(SizeBox.Text, out int size) || size < 20 || size > 400) return null;
+        double x = 540, y = 960;
+        if (CustomPosition && !TryGetTextXY(out x, out y)) return null;
+        try
+        {
+            string text = CaptionBox.Text.Trim();
+            var (file, family, _) = FontCatalog.Resolve(font, text);
+            var colors = CaptionColors();
+            return new Ffmpeg.Caption(text, file, family, size, colors.Text, colors.Outline,
+                (Ffmpeg.TextPosition)Math.Max(0, PositionBox.SelectedIndex), BackBoxRadio.IsChecked == true, x, y);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>字幕の画の見た目（自由な位置の X/Y は含めない。位置だけの変更は、描き直さずにずらすため）。</summary>
+    static string OverlayKey(Ffmpeg.Caption c) =>
+        string.Join("|", c.Text, c.FontFile, c.FontFamily, c.Size, c.TextColor, c.OutlineColor, c.Box, c.Position);
+
+    /// <summary>字幕の設定が変わったかもしれない。位置はすぐ合わせ、画は少し待ってから（打っている途中に何度も描かないよう）描き直す。</summary>
+    void ScheduleOverlay()
+    {
+        if (!_ready) return;
+        UpdateOverlayPlacement();
+        _overlayTimer.Stop();
+        _overlayTimer.Start();
+    }
+
+    /// <summary>字幕だけの画を描く（見た目が変わっていなければ描かない）。ドラッグ中は、終わってから描く。</summary>
+    async void RenderOverlay()
+    {
+        _overlayTimer.Stop();
+        if (_dragStart != null) return;
+        var caption = OverlayCaption();
+        int version = ++_overlayVersion;
+        if (caption == null || !Ffmpeg.IsAvailable)
+        {
+            ClearOverlay();
+            return;
+        }
+        string key = OverlayKey(caption);
+        if (key == _overlayKey && CaptionOverlay.Source != null)
+        {
+            UpdateOverlayPlacement();
+            return;
+        }
+        try
+        {
+            byte[] png = await Ffmpeg.RenderCaptionAsync(caption, OverlayWidth, OverlayHeight, CancellationToken.None);
+            if (version != _overlayVersion || _dragStart != null) return;
+            var image = LoadPng(png);
+            var box = AlphaBounds(image);
+            double k = 1080.0 / OverlayWidth;
+            _overlayBox = box.IsEmpty ? Rect.Empty : new Rect(box.X * k, box.Y * k, box.Width * k, box.Height * k);
+            _overlayAnchor = caption.Position == Ffmpeg.TextPosition.Custom ? new Point(caption.X, caption.Y)
+                : _overlayBox.IsEmpty ? new Point(540, 960)
+                : new Point(Math.Round(_overlayBox.X + _overlayBox.Width / 2), Math.Round(_overlayBox.Y + _overlayBox.Height / 2));
+            _overlayKey = key;
+            CaptionOverlay.Source = image;
+            UpdateOverlayPlacement();
+        }
+        catch
+        {
+            if (version == _overlayVersion) ClearOverlay();
+        }
+    }
+
+    void ClearOverlay()
+    {
+        CaptionOverlay.Source = null;
+        _overlayKey = null;
+        _overlayBox = Rect.Empty;
+        UpdateOverlayPlacement();
+    }
+
+    /// <summary>
+    /// 字幕の画を出すか決めて、今の位置に置く（自由な位置なら、描いたときの位置からずらす）。
+    /// 静止画のプレビュー（まだ作っていなければ暗い枠の上）に重ねる。動画のプレビューは字幕も焼き込んであるので重ねない。
+    /// </summary>
+    void UpdateOverlayPlacement()
+    {
+        bool show = CaptionOverlay.Source != null && TextCheck.IsChecked == true && PreviewImage.Visibility == Visibility.Visible;
+        CaptionOverlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        var pos = CurrentCaptionPosition();
+        double k = PreviewScale();
+        CaptionShift.X = (pos.X - _overlayAnchor.X) * k;
+        CaptionShift.Y = (pos.Y - _overlayAnchor.Y) * k;
+        if (!show) HideDragGuides();
+    }
+
+    /// <summary>字幕の今の位置（1080×1920 の中）。自由なら X/Y の欄、決まった位置なら描いた画の字幕の真ん中。</summary>
+    Point CurrentCaptionPosition() =>
+        CustomPosition && TryGetTextXY(out double x, out double y) ? new Point(x, y) : _overlayAnchor;
+
+    /// <summary>出来上がりの 1 ピクセルが、プレビュー欄では何ピクセルか。</summary>
+    double PreviewScale() => (PreviewFrame.ActualWidth > 0 ? PreviewFrame.ActualWidth : PreviewFrame.Width) / 1080;
+
+    /// <summary>字幕の枠（プレビュー欄の中の位置）。字幕の画が無ければ Empty。</summary>
+    internal Rect CaptionScreenBox()
+    {
+        if (_overlayBox.IsEmpty) return Rect.Empty;
+        var pos = CurrentCaptionPosition();
+        var box = _overlayBox;
+        box.Offset(pos.X - _overlayAnchor.X, pos.Y - _overlayAnchor.Y);
+        double k = PreviewScale();
+        return new Rect(box.X * k, box.Y * k, box.Width * k, box.Height * k);
+    }
+
+    /// <summary>透明な画の中で、何か描かれている所（少しでも不透明な所）を囲む枠（画の画素で）。何も無ければ Empty。</summary>
+    internal static Rect AlphaBounds(BitmapSource image)
+    {
+        var bgra = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
+        int width = bgra.PixelWidth, height = bgra.PixelHeight, stride = width * 4;
+        var pixels = new byte[stride * height];
+        bgra.CopyPixels(pixels, stride, 0);
+        int minX = width, minY = height, maxX = -1, maxY = -1;
+        for (int y = 0; y < height; y++)
+        {
+            int row = y * stride;
+            for (int x = 0; x < width; x++)
+            {
+                if (pixels[row + x * 4 + 3] <= 24) continue;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+        return maxX < 0 ? Rect.Empty : new Rect(minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
+
+    /// <summary>プレビュー欄の中の点 p が、ドラッグできる字幕の上か（④ で、字幕を重ねているときだけ）。</summary>
+    bool OverCaption(Point p)
+    {
+        if (_step != 3 || CaptionOverlay.Visibility != Visibility.Visible || _busy) return false;
+        var box = CaptionScreenBox();
+        if (box.IsEmpty) return false;
+        box.Inflate(8, 8); // 細い字でもつかみやすいよう、少し広めに
+        return box.Contains(p);
+    }
+
+    /// <summary>字幕のドラッグを始める（p はプレビュー欄の中の位置）。字幕の上でなければ false。決まった位置からなら「自由」にする。</summary>
+    internal bool BeginCaptionDrag(Point p)
+    {
+        if (!OverCaption(p)) return false;
+        _dragFrom = CurrentCaptionPosition();
+        _dragStart = p;
+        if (!CustomPosition)
+        {
+            SetTextXY(_dragFrom, refresh: false);
+            PositionBox.SelectedIndex = (int)Ffmpeg.TextPosition.Custom;
+        }
+        ShowDragGuides(false, false);
+        return true;
+    }
+
+    /// <summary>字幕をドラッグして p まで動かした。真ん中の近くならぴったり真ん中にし、画面からはみ出さないようにする。</summary>
+    internal void MoveCaptionDrag(Point p)
+    {
+        if (_dragStart is not { } start) return;
+        double k = PreviewScale();
+        var (pos, snapX, snapY) = SnapAndClamp(new Point(_dragFrom.X + (p.X - start.X) / k, _dragFrom.Y + (p.Y - start.Y) / k));
+        SetTextXY(pos);
+        ShowDragGuides(snapX, snapY);
+    }
+
+    /// <summary>字幕のドラッグを終える（その位置で字幕を描き直す）。</summary>
+    internal void EndCaptionDrag()
+    {
+        if (_dragStart == null) return;
+        _dragStart = null;
+        HideDragGuides();
+        ScheduleOverlay();
+    }
+
+    /// <summary>
+    /// 字幕の位置 p（1080×1920 の中）を、真ん中の近くならぴったり真ん中にして（SnapX / SnapY）、字幕の枠が
+    /// 画面からはみ出さない所に収める（字幕が画面より大きければ真ん中）。
+    /// </summary>
+    internal (Point Pos, bool SnapX, bool SnapY) SnapAndClamp(Point p)
+    {
+        double x = Math.Abs(p.X - 540) <= SnapDistance ? 540 : p.X;
+        double y = Math.Abs(p.Y - 960) <= SnapDistance ? 960 : p.Y;
+        if (!_overlayBox.IsEmpty)
+        {
+            // 字幕の枠は、位置からこれだけずれた所にある（描いた画から）
+            x = Inside(x, _overlayAnchor.X - _overlayBox.Left, 1080 - (_overlayBox.Right - _overlayAnchor.X));
+            y = Inside(y, _overlayAnchor.Y - _overlayBox.Top, 1920 - (_overlayBox.Bottom - _overlayAnchor.Y));
+        }
+        x = Math.Round(x);
+        y = Math.Round(y);
+        return (new Point(x, y), x == 540, y == 960);
+
+        static double Inside(double v, double min, double max) => min <= max ? Math.Clamp(v, min, max) : (min + max) / 2;
+    }
+
+    /// <summary>ドラッグ中の目安を出す（字幕の枠と位置。真ん中にぴったり合ったら、その線）。</summary>
+    void ShowDragGuides(bool snapX, bool snapY)
+    {
+        double width = PreviewFrame.ActualWidth, height = PreviewFrame.ActualHeight;
+        var box = CaptionScreenBox();
+        CaptionGuides.Visibility = Visibility.Visible;
+        (GuideV.X1, GuideV.X2, GuideV.Y1, GuideV.Y2) = (width / 2, width / 2, 0, height);
+        (GuideH.X1, GuideH.X2, GuideH.Y1, GuideH.Y2) = (0, width, height / 2, height / 2);
+        GuideV.Visibility = snapX ? Visibility.Visible : Visibility.Collapsed;
+        GuideH.Visibility = snapY ? Visibility.Visible : Visibility.Collapsed;
+        if (!box.IsEmpty)
+        {
+            Canvas.SetLeft(CaptionFrame, box.X - 3);
+            Canvas.SetTop(CaptionFrame, box.Y - 3);
+            CaptionFrame.Width = box.Width + 6;
+            CaptionFrame.Height = box.Height + 6;
+        }
+        var pos = CurrentCaptionPosition();
+        CaptionPosText.Text = $"X {pos.X:0}・Y {pos.Y:0}";
+        CaptionPosLabel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var label = CaptionPosLabel.DesiredSize;
+        // 字幕の枠の上に出す（上に場所が無ければ下）
+        Canvas.SetLeft(CaptionPosLabel, Math.Clamp(box.IsEmpty ? 4 : box.X, 0, Math.Max(0, width - label.Width)));
+        Canvas.SetTop(CaptionPosLabel, box.IsEmpty ? 4 : box.Y - label.Height - 6 >= 0 ? box.Y - label.Height - 6 : box.Bottom + 6);
+    }
+
+    void HideDragGuides() => CaptionGuides.Visibility = Visibility.Collapsed;
+
+    void PreviewFrame_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!BeginCaptionDrag(e.GetPosition(PreviewFrame))) return;
+        PreviewFrame.CaptureMouse();
+        e.Handled = true;
+    }
+
+    void PreviewFrame_MouseMove(object sender, MouseEventArgs e)
+    {
+        var p = e.GetPosition(PreviewFrame);
+        if (_dragStart != null)
+        {
+            MoveCaptionDrag(p);
+            return;
+        }
+        // ④ で字幕の上に来たら、動かせることがわかる形のカーソルにする（動画のときは、クリックで再生・一時停止の手の形）
+        if (PreviewVideoRadio.IsChecked != true) PreviewFrame.Cursor = OverCaption(p) ? Cursors.SizeAll : null;
+    }
+
+    void PreviewFrame_LostMouseCapture(object sender, MouseEventArgs e) => EndCaptionDrag();
 
     /// <summary>⑤ のまとめに出す色（セットの名前か、自由に選んだ 2 色）。</summary>
     string ColorLabel()
@@ -606,6 +938,8 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(CaptionBox.Text)) return "入れるテキストを入力してください";
             if (!TryParseSeconds(SizeBox.Text, out size) || size < 20 || size > 400) return "文字の大きさは 20〜400 にしてください";
             if (FontBox.SelectedItem == null) return "フォントを選んでください";
+            if (CustomPosition && !TryGetTextXY(out _, out _))
+                return "字幕の位置は、X を 0〜1080・Y を 0〜1920 の数で入れてください";
         }
         settings = new Settings(target, intro, fadeIn, fadeOut, size);
         return null;
@@ -638,6 +972,7 @@ public partial class MainWindow : Window
         UpdateStepMarks();
         UpdateState();
         UpdatePreviewStale();
+        ScheduleOverlay();
     }
 
     /// <summary>⑤ の「設定のまとめ」と「保存先」。s は入力チェックを通ったときの設定（通らなければ null）。</summary>
@@ -658,7 +993,7 @@ public partial class MainWindow : Window
         string firstLine = CaptionBox.Text.Trim().Split('\n')[0].Trim();
         SumTextText.Text = TextCheck.IsChecked != true ? "なし"
             : $"{(firstLine == "" ? "（まだ入れていません）" : firstLine)}・{FontBox.SelectedItem}・{ColorLabel()}・{SizeBox.Text}"
-              + $"・{PositionBox.SelectedItem}" + (BackBoxRadio.IsChecked == true ? "・帯あり" : "");
+              + $"・{PositionLabel()}" + (BackBoxRadio.IsChecked == true ? "・帯あり" : "");
         string name = _files.Count == 0 ? "（元の動画の名前）" : System.IO.Path.GetFileNameWithoutExtension(_files[0]);
         string file = $"「{name}_{_platform.Key}.mp4」";
         SaveText.Text = _settings.UseOutputFolder && _settings.OutputFolder is { } folder
@@ -706,8 +1041,10 @@ public partial class MainWindow : Window
                 "フォントの確認", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return false;
         var color = CaptionColors();
+        double x = 540, y = 960;
+        if (CustomPosition) TryGetTextXY(out x, out y); // 読めることは Validate で確かめてある
         caption = new Ffmpeg.Caption(text, file, family, s.TextSize, color.Text, color.Outline,
-            (Ffmpeg.TextPosition)Math.Max(0, PositionBox.SelectedIndex), BackBoxRadio.IsChecked == true);
+            (Ffmpeg.TextPosition)Math.Max(0, PositionBox.SelectedIndex), BackBoxRadio.IsChecked == true, x, y);
         return true;
     }
 
@@ -814,22 +1151,13 @@ public partial class MainWindow : Window
     async void PreviewButton_Click(object sender, RoutedEventArgs e)
     {
         if (_files.Count == 0 || Validate(out var s) != null) return;
-        Ffmpeg.Caption? caption;
-        try
-        {
-            if (!TryMakeCaption(s, "プレビュー", out caption)) return;
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
-            return;
-        }
         var layout = BlurRadio.IsChecked == true ? Ffmpeg.Layout.Blur : Ffmpeg.Layout.Crop;
         PreviewCaption.Text = "プレビューを作成中…";
         SetBusy(true);
         try
         {
-            var frames = await Ffmpeg.RenderPreviewAsync(_files, _totalSeconds, s.Target, s.Intro, layout, caption,
+            // 字幕は描かない（字幕だけの画を重ねて出すので、字幕を変えても描き直さなくてよい）
+            var frames = await Ffmpeg.RenderPreviewAsync(_files, _totalSeconds, s.Target, s.Intro, layout, null,
                 CancellationToken.None);
             SetPreview(frames, s.Intro != null);
         }
@@ -963,8 +1291,15 @@ public partial class MainWindow : Window
     }
 
     /// <summary>動画を出しているときは、クリックで一時停止・続き・もう一度。</summary>
-    void PreviewFrame_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    void PreviewFrame_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (_dragStart != null)
+        {
+            EndCaptionDrag();
+            PreviewFrame.ReleaseMouseCapture();
+            e.Handled = true;
+            return;
+        }
         if (PreviewVideoRadio.IsChecked != true || _clipFile == null || PreviewVideo.Visibility != Visibility.Visible) return;
         if (_clipEnded || _clipPaused)
         {
@@ -1018,6 +1353,7 @@ public partial class MainWindow : Window
                 PreviewPlaceholder.Text = "動画を入れて、下の「動画で見る」を押すと、出来上がりの最初の数秒（完成品と、本編のはじめ）を"
                                           + "BGM つきの動画で作って、ここで再生します";
                 PreviewPlaceholder.Visibility = Visibility.Visible;
+                UpdateOverlayPlacement();
                 return;
             }
             PreviewPlaceholder.Visibility = Visibility.Collapsed;
@@ -1026,6 +1362,7 @@ public partial class MainWindow : Window
             _clipPaused = _clipEnded = false;
             PreviewReplay.Visibility = Visibility.Collapsed;
             PreviewVideo.Play();
+            UpdateOverlayPlacement();
             return;
         }
         CloseClip();
@@ -1046,19 +1383,25 @@ public partial class MainWindow : Window
             PreviewCaption.Text = "";
             PreviewPlaceholder.Visibility = Visibility.Visible;
         }
+        UpdateOverlayPlacement();
     }
 
-    /// <summary>画の見た目に関わる設定をまとめた文字列（BGM と完成品のフェードは静止画に出ないので含めない）。</summary>
+    /// <summary>
+    /// 画の見た目に関わる設定をまとめた文字列。字幕は画に重ねてすぐ描き直すので含めない（BGM と完成品のフェードも
+    /// 静止画に出ないので含めない）。
+    /// </summary>
     string PreviewKey() => string.Join("|", string.Join(";", _files), LengthBox.Text,
-        Intro.Choice with { FadeIn = "", FadeOut = "" },
-        BlurRadio.IsChecked, TextCheck.IsChecked, CaptionBox.Text, FontBox.SelectedIndex, CaptionColors(),
-        BackBoxRadio.IsChecked, SizeBox.Text, PositionBox.SelectedIndex);
+        Intro.Choice with { FadeIn = "", FadeOut = "" }, BlurRadio.IsChecked);
+
+    /// <summary>字幕に関わる設定（動画のプレビューは字幕も焼き込むので、こちらも含める）。</summary>
+    string CaptionKey() => string.Join("|", TextCheck.IsChecked, CaptionBox.Text, FontBox.SelectedIndex, CaptionColors(),
+        BackBoxRadio.IsChecked, SizeBox.Text, PositionBox.SelectedIndex, TextXBox.Text, TextYBox.Text);
 
     /// <summary>
     /// 動画のプレビューに関わる設定。画の設定に、BGM（曲・音量・フェードイン）と完成品のフェードを足したもの。
     /// BGM のフェードアウトは動画の終わりにかかるので、最初の数秒の動画には出ない（含めない）。
     /// </summary>
-    string ClipKey() => string.Join("|", PreviewKey(), _bgmFile, VolumeSlider.Value, FadeInBox.Text,
+    string ClipKey() => string.Join("|", PreviewKey(), CaptionKey(), _bgmFile, VolumeSlider.Value, FadeInBox.Text,
         Intro.Choice.FadeIn, Intro.Choice.FadeOut);
 
     /// <summary>表示中のプレビュー（画か動画）を作ったあとに設定が変わっていたら、そのことを画の上に出す。</summary>
@@ -1111,6 +1454,7 @@ public partial class MainWindow : Window
         BgmSelectButton.IsEnabled = Ffmpeg.IsAvailable;
         BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = VolumeSlider.IsEnabled = _bgmFile != null;
         CaptionBox.IsEnabled = FontBox.IsEnabled = SizeBox.IsEnabled = ColorBox.IsEnabled = CustomColors.IsEnabled = PositionBox.IsEnabled
+            = TextXBox.IsEnabled = TextYBox.IsEnabled
             = BackNoneRadio.IsEnabled = BackBoxRadio.IsEnabled = TextCheck.IsChecked == true;
         bool valid = _files.Count > 0 && _totalSeconds > 0 && Validate(out _) == null;
         PreviewButton.IsEnabled = idle && valid; // プレビューは画像を作るだけなので、エンコーダーは要らない

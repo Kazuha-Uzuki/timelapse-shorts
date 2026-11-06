@@ -125,15 +125,17 @@ public static class Ffmpeg
     /// <summary>BGM。Seconds は曲の長さ（動画より短いときに繰り返す回数の計算に使う）。GainDb は音量の上げ下げ（dB）。</summary>
     public record Bgm(string File, double Seconds, double FadeIn, double FadeOut, double GainDb = 0);
 
-    public enum TextPosition { Top, Middle, Bottom }
+    /// <summary>文字の位置。Custom は X / Y（字幕の真ん中の位置）で決める（プレビューでドラッグして置く）。</summary>
+    public enum TextPosition { Top, Middle, Bottom, Custom }
 
     /// <summary>
     /// 動画に重ねる文字。色は "RRGGBB"。
     /// FontFamily はフォントの中に書かれた Windows 用のファミリー名（libass はこの名前でフォントを探す）。
     /// Box が true なら、フチ取りの代わりに OutlineColor の帯（背景）の上に文字を描く。
+    /// X / Y は、Position が Custom のときの字幕の真ん中の位置（出来上がりの 1080×1920 の中。左上が 0, 0）。
     /// </summary>
     public record Caption(string Text, string FontFile, string FontFamily, int Size,
-        string TextColor, string OutlineColor, TextPosition Position, bool Box = false);
+        string TextColor, string OutlineColor, TextPosition Position, bool Box = false, double X = 540, double Y = 960);
 
     /// <summary>プレビューの1枚。Seconds は出来上がりの何秒目か。</summary>
     public record PreviewFrame(double Seconds, byte[] Png);
@@ -468,6 +470,31 @@ public static class Ffmpeg
         }
     }
 
+    /// <summary>
+    /// 文字だけを、透明な画面（出来上がりの 1080×1920 を width×height に縮めたもの）に、変換と同じ libass で描いて
+    /// PNG（透明つき）で返す。プレビューの画に重ねて出し、④ でドラッグして動かすのに使う（動画を読まないので速い）。
+    /// </summary>
+    public static async Task<byte[]> RenderCaptionAsync(Caption caption, int width, int height, CancellationToken ct)
+    {
+        string work = Path.Combine(Path.GetTempPath(), $"timelapse_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(work, "fonts"));
+        try
+        {
+            File.Copy(caption.FontFile, Path.Combine(work, "fonts", Path.GetFileName(caption.FontFile)));
+            await File.WriteAllTextAsync(Path.Combine(work, "caption.ass"), BuildAss(caption, 1), new UTF8Encoding(false), ct);
+            string png = Path.Combine(work, "caption.png");
+            var (_, _, stderr) = await RunAsync(FfmpegPath,
+                ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", $"color=c=black@0:s={width}x{height}:d=1,format=rgba",
+                 "-vf", "ass=caption.ass:fontsdir=fonts:alpha=1", "-frames:v", "1", png], work);
+            if (!File.Exists(png)) throw new InvalidOperationException("文字の画を作れませんでした。\n" + stderr.Trim());
+            return await File.ReadAllBytesAsync(png, ct);
+        }
+        finally
+        {
+            try { Directory.Delete(work, true); } catch { }
+        }
+    }
+
     /// <summary>HDR 動画（iPhone などの HLG / PQ）か。そのまま再生すると色が白っぽくなる。</summary>
     public static async Task<bool> IsHdrAsync(string file) => await GetHdrTransferAsync(file) != null;
 
@@ -510,9 +537,13 @@ public static class Ffmpeg
         (int align, int marginV) = c.Position switch
         {
             TextPosition.Top => (8, 280),
-            TextPosition.Middle => (5, 0),
+            TextPosition.Middle or TextPosition.Custom => (5, 0),
             _ => (2, 600),
         };
+        // 自由な位置は、字幕の真ん中を (X, Y) に置く（\an5 = 真ん中ぞろえ、\pos = 位置）
+        string pos = c.Position == TextPosition.Custom
+            ? $@"{{\an5\pos({Math.Round(c.X).ToString(Inv)},{Math.Round(c.Y).ToString(Inv)})}}"
+            : "";
         // 背景なし: フチ取り＋影。背景あり: OutlineColor の帯（ASS の BorderStyle 3。このとき Outline は帯の余白）
         (int border, int outline, int shadow) = c.Box
             ? (3, Math.Max(6, c.Size / 5), 0)
@@ -535,7 +566,7 @@ public static class Ffmpeg
 
             [Events]
             Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-            Dialogue: 0,0:00:00.00,{(int)end.TotalHours}:{end:mm\:ss}.00,Caption,,0,0,0,,{text}
+            Dialogue: 0,0:00:00.00,{(int)end.TotalHours}:{end:mm\:ss}.00,Caption,,0,0,0,,{pos}{text}
 
             """;
     }

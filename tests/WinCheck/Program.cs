@@ -77,8 +77,9 @@ static class Program
         Check("フォント一覧（★が先頭）", w.FontBox.Items.Count > 9 && w.FontBox.Items[0]!.ToString()!.StartsWith('★'),
             $"{w.FontBox.Items.Count} 個 / 先頭 {w.FontBox.Items[0]}");
         Check("色と位置の選択肢（色は 4 つのセットと「自由に選ぶ（RGB）」）", w.ColorBox.Items.Count == 5
-            && w.ColorBox.Items[4]!.ToString() == "自由に選ぶ（RGB）" && w.PositionBox.Items.Count == 3
-            && w.CustomColorBox.Visibility == Visibility.Collapsed);
+            && w.ColorBox.Items[4]!.ToString() == "自由に選ぶ（RGB）" && w.PositionBox.Items.Count == 4
+            && w.PositionBox.Items[3]!.ToString() == "自由（ドラッグ）" && w.CustomColorBox.Visibility == Visibility.Collapsed
+            && w.PositionXY.Visibility == Visibility.Collapsed);
         Check("総尺の初期値", w.LengthBox.Text == "2:59", w.LengthBox.Text);
         Check("最初は ① 動画の画面", w.VideoStep.Visibility == Visibility.Visible && w.Intro.Visibility == Visibility.Collapsed
             && w.MakeStep.Visibility == Visibility.Collapsed && w.SourcePicture.Visibility == Visibility.Visible
@@ -205,16 +206,25 @@ static class Program
         w.SizeBox.Text = "８０"; // 全角でも読める
         Check("全角の数字", w.StartButton.IsEnabled, w.InfoText.Text);
 
-        // 色の「自由に選ぶ（RGB）」: 選ぶとパレットが出て、最初はそれまでのセットの色から始まる
+        // 色の「自由に選ぶ（RGB）」: 選ぶと円形のパレット（色の輪と明るさ）が出て、最初はそれまでのセットの色から始まる
         var colors = w.CustomColors;
         (string, string) CaptionColors() => ((string, string))typeof(MainWindow).GetMethod("CaptionColors", F)!.Invoke(w, null)!;
         bool SampleIs(Brush? brush, string hex) => brush is SolidColorBrush { Color: var shown } && ColorPanel.Hex(shown) == hex;
+        // 輪の上の印（今の色の所）が、その色の色合い・鮮やかさの所にあるか
+        bool MarkerAt(string hex)
+        {
+            var (h, sat, _) = ColorPanel.ToHsv(ColorPanel.Parse(hex)!.Value);
+            var (x, y) = ColorPanel.WheelPoint(h, sat);
+            return Math.Abs(Canvas.GetLeft(colors.Marker) + colors.Marker.Width / 2 - x) < 1.5
+                   && Math.Abs(Canvas.GetTop(colors.Marker) + colors.Marker.Height / 2 - y) < 1.5;
+        }
         w.ColorBox.SelectedIndex = 2; // 黄（黒フチ）
         w.ColorBox.SelectedIndex = 4; // 自由に選ぶ（RGB）
-        Check("色を自由に選ぶ: パレットが出て、それまでのセット（黄（黒フチ））の色から始まる",
+        Check("色を自由に選ぶ: 円形のパレットが出て、それまでのセット（黄（黒フチ））の色から始まる",
             w.CustomColorBox.Visibility == Visibility.Visible && colors.TextColor == "FFE600" && colors.OutlineColor == "000000"
             && colors.HexBox.Text == "FFE600" && colors.RBox.Text == "255" && colors.GBox.Text == "230" && colors.BBox.Text == "0"
-            && colors.GSlider.Value == 230, $"{colors.TextColor} / {colors.OutlineColor} / {colors.HexBox.Text}");
+            && colors.BrightSlider.Value == 100 && colors.WheelImage.Source != null && MarkerAt("FFE600"),
+            $"{colors.TextColor} / {colors.OutlineColor} / {colors.HexBox.Text} / 明るさ {colors.BrightSlider.Value}");
         var red = colors.Swatches.Children.OfType<Button>().First(b => (string)b.ToolTip == "#FF3B30");
         red.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
         Check("色を自由に選ぶ: 見本の色をクリックすると文字の色になり、見本・まとめ・変換に渡す色も変わる",
@@ -225,11 +235,26 @@ static class Program
         colors.RBox.Text = "２８"; // 全角でも読める
         colors.GBox.Text = "61";
         colors.BBox.Text = "122";
-        Check("色を自由に選ぶ: フチの色を R/G/B の数値で（バーも動く）", colors.OutlineColor == "1C3D7A" && colors.TextColor == "FF3B30"
-            && colors.RSlider.Value == 28 && colors.GSlider.Value == 61 && colors.HexBox.Text == "1C3D7A" && colors.RBox.Text == "28",
-            $"{colors.TextColor} / {colors.OutlineColor}");
-        colors.GSlider.Value = 95;
-        Check("色を自由に選ぶ: バーを動かすと数値も変わる", colors.OutlineColor == "1C5F7A" && colors.GBox.Text == "95", colors.OutlineColor);
+        Check("色を自由に選ぶ: フチの色を R/G/B の数値で（明るさ・輪の印も合う）", colors.OutlineColor == "1C3D7A"
+            && colors.TextColor == "FF3B30" && colors.BrightSlider.Value == 48 && colors.HexBox.Text == "1C3D7A" && colors.RBox.Text == "28"
+            && MarkerAt("1C3D7A"), $"{colors.TextColor} / {colors.OutlineColor} / 明るさ {colors.BrightSlider.Value}");
+        double r = ColorPanel.WheelSize / 2;
+        colors.PickWheel(new Point(r, 0)); // 輪のいちばん上
+        Check("色を自由に選ぶ: 輪のいちばん上は赤（明るさはそのまま 48%）", colors.OutlineColor == "7A0000" && MarkerAt("FF0000"),
+            colors.OutlineColor);
+        colors.BrightSlider.Value = 100;
+        Check("色を自由に選ぶ: 明るさを上げると、数値も変わる", colors.OutlineColor == "FF0000" && colors.RBox.Text == "255"
+            && colors.BrightText.Text == "100%", colors.OutlineColor);
+        var (gx, gy) = ColorPanel.WheelPoint(120, 1);
+        colors.PickWheel(new Point(gx, gy)); // 右下（上から右回りに 120°）
+        Check("色を自由に選ぶ: 輪の右下（120°）は緑", colors.OutlineColor == "00FF00", colors.OutlineColor);
+        colors.PickWheel(new Point(r, r)); // 真ん中
+        Check("色を自由に選ぶ: 輪の真ん中は白", colors.OutlineColor == "FFFFFF", colors.OutlineColor);
+        colors.BrightSlider.Value = 0;
+        Check("色を自由に選ぶ: 明るさ 0 は黒", colors.OutlineColor == "000000" && colors.BrightText.Text == "0%", colors.OutlineColor);
+        colors.PickWheel(new Point(r, 0));
+        Check("色を自由に選ぶ: 黒のまま輪を選ぶと、いちばん明るくなる", colors.OutlineColor == "FF0000" && colors.BrightSlider.Value == 100,
+            colors.OutlineColor);
         colors.HexBox.Text = "#ff5fa2"; // # つき・小文字でも
         colors.RBox.Text = "300"; // 0〜255 でなければ変えない
         Check("色を自由に選ぶ: #RRGGBB で（読めない数は無視）", colors.OutlineColor == "FF5FA2", colors.OutlineColor);
@@ -637,6 +662,16 @@ static class Program
             Check("テキストの背景（帯）", Ffmpeg.BuildAss(boxed, 5).Contains(",100,100,0,0,3,")
                                         && Ffmpeg.BuildAss(caption, 5).Contains(",100,100,0,0,1,")
                                         && !Same(withBox[0], withText[0]) && !Same(withBox[0], plain[0]));
+            // 自由な位置: 字幕の真ん中を (X, Y) に置く。字幕だけの画（透明）では、字幕の枠の真ん中がそこに来る
+            var free = caption with { Position = Ffmpeg.TextPosition.Custom, X = 300, Y = 1500 };
+            byte[] overlay = await Ffmpeg.RenderCaptionAsync(free, 540, 960, CancellationToken.None);
+            var image = MainWindow.LoadPng(overlay);
+            var box = MainWindow.AlphaBounds(image);
+            double cx = (box.X + box.Width / 2) * 2, cy = (box.Y + box.Height / 2) * 2; // 540×960 → 1080×1920
+            Check("字幕だけの画: 透明で、自由な位置 (300, 1500) に字幕の真ん中が来る",
+                image.PixelWidth == 540 && image.PixelHeight == 960 && !box.IsEmpty && box.Width < 540
+                && Math.Abs(cx - 300) < 12 && Math.Abs(cy - 1500) < 12 && Ffmpeg.BuildAss(free, 5).Contains(@"{\an5\pos(300,1500)}"),
+                $"字幕の枠 {box}・真ん中 {cx:0}, {cy:0}");
         }
 
         // 2本（各30秒）をつないで5秒・最後の1秒を冒頭へ → 12倍速。
@@ -650,7 +685,7 @@ static class Program
         var only1 = await Render([video], total, 2, null);
         Check("プレビュー（2本）: 最初は2本目の完成品", Same(multi[0], only2[0]), $"{multiSeconds:0.00}秒");
         Check("プレビュー（2本）: 真ん中は1本目", Same(multi[1], only1[0]));
-        _previewFrames = withText ?? plain;
+        _previewFrames = plain; // 画面のプレビューは字幕なしで描き、字幕だけの画を重ねる
     }
 
     /// <summary>
@@ -685,14 +720,18 @@ static class Program
             Check("プレビュー欄: 作ったあと設定を変えなければ最新", !w.PreviewStale.IsVisible);
             string size = w.SizeBox.Text;
             w.SizeBox.Text = "120";
-            bool staleAfterChange = w.PreviewStale.IsVisible;
             w.BackBoxRadio.IsChecked = true;
+            Check("プレビュー欄: 字幕を変えても画は古くならない（字幕は重ねて描き直す）", !w.PreviewStale.IsVisible);
             w.BackNoneRadio.IsChecked = true;
             w.SizeBox.Text = size;
-            Check("プレビュー欄: 設定を変えると古いと出て、戻すと消える", staleAfterChange && !w.PreviewStale.IsVisible);
+            w.BlurRadio.IsChecked = true;
+            bool staleAfterChange = w.PreviewStale.IsVisible;
+            w.CropRadio.IsChecked = true;
+            Check("プレビュー欄: 画に関わる設定を変えると古いと出て、戻すと消える", staleAfterChange && !w.PreviewStale.IsVisible);
             w.VolumeSlider.Value = -3;
             Check("プレビュー欄: BGM の音量では古くならない", !w.PreviewStale.IsVisible);
             w.VolumeSlider.Value = -6;
+            CheckCaptionDrag(w);
             CheckVideoPreview(w);
             CheckIntroMedia(w);
 
@@ -769,7 +808,9 @@ static class Program
             w.VolumeSlider.Value = -4;
             w.FontBox.SelectedIndex = 1;
             w.ColorBox.SelectedIndex = 4; // 自由に選ぶ（RGB）。色は CheckWindow で選んだ 文字 FF3B30・フチ FF5FA2
-            w.PositionBox.SelectedIndex = 2;
+            w.PositionBox.SelectedIndex = 3; // 自由（ドラッグ）
+            w.TextXBox.Text = "300";
+            w.TextYBox.Text = "1600";
             w.BackBoxRadio.IsChecked = true;
             w.SizeBox.Text = "100";
 
@@ -787,6 +828,63 @@ static class Program
         {
             Check("プレビュー欄", false, ex.ToString());
         }
+    }
+
+    /// <summary>
+    /// ④ のプレビュー欄: 字幕だけの画（透明。変換と同じ libass で描く）が画に重なり、ドラッグで動かせる。動かすと位置が
+    /// 「自由」になり、X/Y の欄と ⑤ のまとめに出る。真ん中の近くではぴったり真ん中に合い、画面からははみ出さない。
+    /// 離すと、その位置で描き直す（字幕の真ん中が X/Y に来る）。
+    /// </summary>
+    static void CheckCaptionDrag(MainWindow w)
+    {
+        bool Wait(Func<bool> done, double seconds)
+        {
+            var sw = Stopwatch.StartNew();
+            while (!done() && sw.Elapsed.TotalSeconds < seconds) Pump(TimeSpan.FromMilliseconds(50));
+            return done();
+        }
+        string? Key() => (string?)typeof(MainWindow).GetField("_overlayKey", F)!.GetValue(w);
+        w.ShowStep(3);
+        w.PreviewFirstRadio.IsChecked = true;
+        w.PositionBox.SelectedIndex = 0; // 上
+        bool drawn = Wait(() => w.CaptionOverlay.IsVisible && Key()?.EndsWith("|Top") == true && !w.CaptionScreenBox().IsEmpty, 20);
+        var box = w.CaptionScreenBox();
+        double width = w.PreviewFrame.ActualWidth, height = w.PreviewFrame.ActualHeight, k = width / 1080;
+        Check("④ 字幕だけの画がプレビューに重なる（上の位置・左右の真ん中）",
+            drawn && box.Bottom < height / 2 && Math.Abs(box.X + box.Width / 2 - width / 2) < 4, $"字幕の枠 {box}");
+        if (!drawn) return;
+
+        var grab = new Point(box.X + box.Width / 2, box.Y + box.Height / 2);
+        bool began = w.BeginCaptionDrag(grab);
+        double y0 = double.TryParse(w.TextYBox.Text, out double y) ? y : double.NaN;
+        Check("④ 字幕をつかむと位置が「自由」になり、X/Y は今の字幕の真ん中から", began && w.PositionBox.SelectedIndex == 3
+            && w.PositionXY.IsVisible && w.TextXBox.Text == "540" && Math.Abs(y0 - (grab.Y / k)) < 3, $"X {w.TextXBox.Text}・Y {w.TextYBox.Text}");
+        w.MoveCaptionDrag(new Point(grab.X + 40 * k, grab.Y + 500 * k)); // 1080×1920 の中で 右へ 40・下へ 500
+        Check("④ ドラッグで動き、X/Y の欄も変わる", w.TextXBox.Text == "580" && w.TextYBox.Text == $"{y0 + 500}"
+            && w.CaptionPosText.Text == $"X 580・Y {y0 + 500}" && w.CaptionFrame.IsVisible, $"X {w.TextXBox.Text}・Y {w.TextYBox.Text}");
+        w.MoveCaptionDrag(new Point(grab.X + 10 * k, grab.Y + (960 - y0 - 9) * k)); // 真ん中から 横 10・縦 9 ずれた所
+        Check("④ 真ん中の近くでは、ぴったり真ん中に合う（真ん中の線も出る）", w.TextXBox.Text == "540" && w.TextYBox.Text == "960"
+            && w.GuideV.IsVisible && w.GuideH.IsVisible, $"X {w.TextXBox.Text}・Y {w.TextYBox.Text}");
+        w.MoveCaptionDrag(new Point(grab.X - 3000 * k, grab.Y + 3000 * k)); // 左下の外へ
+        var clamped = w.CaptionScreenBox();
+        Check("④ 画面の外へは出ない", clamped.Left >= -0.5 && clamped.Bottom <= height + 0.5 && !w.GuideV.IsVisible,
+            $"字幕の枠 {clamped}（枠 {width:0}×{height:0}）");
+        w.EndCaptionDrag();
+        double x1 = double.Parse(w.TextXBox.Text), y1 = double.Parse(w.TextYBox.Text);
+        bool redrawn = Wait(() => Key()?.EndsWith("|Custom") == true && !w.CaptionGuides.IsVisible, 20);
+        var after = w.CaptionScreenBox();
+        Check("④ 離すと、その位置で描き直す（字幕の真ん中が X/Y）", redrawn
+            && Math.Abs(after.X + after.Width / 2 - x1 * k) < 5 && Math.Abs(after.Y + after.Height / 2 - y1 * k) < 5,
+            $"X {x1}・Y {y1} / 字幕の枠 {after}");
+
+        w.TextXBox.Text = "540";
+        w.TextYBox.Text = "1500";
+        Check("④ X/Y を打っても動き、⑤ のまとめに出る", w.SumTextText.Text.Contains("・自由（X 540・Y 1500）")
+            && Math.Abs(w.CaptionScreenBox().Y + w.CaptionScreenBox().Height / 2 - 1500 * k) < 5, w.SumTextText.Text);
+        w.TextYBox.Text = "２５００"; // 全角も読むが、縦は 1920 まで
+        Check("④ X/Y が範囲の外ならエラー", w.InfoText.Text.StartsWith("字幕の位置は") && !w.StartButton.IsEnabled, w.InfoText.Text);
+        w.TextYBox.Text = "1500";
+        Check("④ 戻せば作れる", w.StartButton.IsEnabled, w.InfoText.Text);
     }
 
     /// <summary>
@@ -989,7 +1087,8 @@ static class Program
             // 冒頭の秒数・持っていきかた・フェードは覚える。範囲は動画ごとなので覚えない
             && w.Intro.Choice is { Enabled: true, Seconds: "7", Copy: true, FadeIn: "0.5", FadeOut: "0.3", HasRange: false }
             && w.FadeInBox.Text == "2" && w.FadeOutBox.Text == "３" && w.VolumeSlider.Value == -4
-            && w.FontBox.SelectedItem?.ToString() == font && w.PositionBox.SelectedIndex == 2
+            && w.FontBox.SelectedItem?.ToString() == font && w.PositionBox.SelectedIndex == 3
+            && w.TextXBox.Text == "300" && w.TextYBox.Text == "1600" && w.PositionXY.Visibility == Visibility.Visible
             // 色は「自由に選ぶ（RGB）」と、選んだ 2 色に戻る
             && w.ColorBox.SelectedIndex == 4 && w.CustomColorBox.Visibility == Visibility.Visible
             && w.CustomColors.TextColor == "FF3B30" && w.CustomColors.OutlineColor == "FF5FA2"

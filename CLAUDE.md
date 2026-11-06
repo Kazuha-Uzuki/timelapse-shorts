@@ -12,7 +12,7 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 | `src/MainWindow.xaml(.cs)` | 画面。上の手順のボタン（① 動画 ▶ ② 冒頭 ▶ ③ BGM ▶ ④ テキスト ▶ ⑤ 作成）で画面を切り替える（`ShowStep`）。左に 9:16 の画（① は元の動画の最初、③④⑤ は出来上がりのプレビュー）、右に設定のカード。投稿先の上限は `Platforms`（2026年10月時点の値） |
 | `src/SettingsWindow.xaml(.cs)` | 「設定」の小さな画面（画面の色・保存先・作成が終わったとき）と、テーマを切り替える `ApplyTheme` |
 | `src/IntroPanel.xaml(.cs)` | ② 冒頭（元の動画・秒数⇄範囲の連動・移す／コピー・フェード・2 本のバー）と、覚える内容 `IntroChoice`。「長さ・投稿先」のカードと「戻る／次へ」は MainWindow.xaml の `IntroParts` に書き、MainWindow のコンストラクターで `LengthContent` / `FooterContent` へ移す（XAML で作った UserControl の中身に名前付きの部品を書くと MC3093 になるため。名前は MainWindow のもの） |
-| `src/ColorPanel.xaml(.cs)` | ④ テキストの「自由に選ぶ（RGB）」のパレット。文字の色とフチ・帯の色（"RRGGBB"）を、見本の色・R/G/B（バーと数値）・#RRGGBB で選ぶ。MainWindow は色の欄で「自由に選ぶ」を選んだときだけ出し、`CaptionColors()` で変換・見本・まとめに使う |
+| `src/ColorPanel.xaml(.cs)` | ④ テキストの「自由に選ぶ（RGB）」の円形のパレット。文字の色とフチ・帯の色（"RRGGBB"）を、色の輪（上が赤で右回りに色合い、真ん中ほど淡い。`WheelPoint` / `PickWheel`）と明るさのバー・R/G/B の数値・#RRGGBB・よく使う色で選ぶ。輪の絵は WriteableBitmap に今の明るさで描く。白・灰・黒では色合いが決まらないので前の値を残す。MainWindow は色の欄で「自由に選ぶ」を選んだときだけ出し、`CaptionColors()` で変換・見本・まとめに使う |
 | `src/RangeBar.cs` | ② の横長のバー（目盛り・選んだ範囲・今の位置）。ドラッグで範囲を選ぶ・範囲ごとずらす・両端の調整。どう動かしたかを知らせるだけで、長さは IntroPanel が決める |
 | `src/SleepWindow.xaml(.cs)` | 「終わったら PC をスリープ」の 60 秒のお知らせ（true を返したら呼んだ側が `SetSuspendState`） |
 | `src/AppSettings.cs` | 前回の設定（`%LOCALAPPDATA%\TimelapseShorts\settings.json`）。閉じるときと設定画面を閉じたときに書く |
@@ -89,3 +89,10 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
   WinCheck は「作成する」を押さないので `AfterDone` は通らない。`SleepWindow` の返す値だけを確かめ、本当にスリープはさせない（CI の PC が止まる）。
 - 設定画面のラジオボタンは2組あるので `GroupName` で分けている（同じパネルにあると1組として扱われる）。
 - WinCheck: CI の画面は 1024×768 なので、窓をそれより大きくするために `WM_GETMINMAXINFO` と WPF の `_trackMaxWidthDeviceUnits` などを広げている。
+
+## ④ テキストの字幕の位置（重ね表示とドラッグ）
+
+- プレビュー欄の静止画は字幕なしで描き（`RenderPreviewAsync` に caption=null）、字幕だけの透明な画（`Ffmpeg.RenderCaptionAsync`。変換と同じ libass、`ass=…:alpha=1`、720×1280）を `CaptionOverlay` に重ねる。字幕の設定を変えると 150ms 待って描き直す（`ScheduleOverlay` / `RenderOverlay`）。`PreviewKey` は画に関わる設定だけ、字幕は `CaptionKey`（動画のプレビューは焼き込むので `ClipKey` に含める）
+- 位置の「自由（ドラッグ）」は `TextPosition.Custom` と X/Y（字幕の真ん中。出来上がりの 1080×1920 の中）。ASS では `{\an5\pos(X,Y)}`
+- 自由な位置で X/Y だけ変わったときは描き直さず、描いたときの位置（`_overlayAnchor`）からの差で `CaptionShift` をずらす。字幕の枠（`_overlayBox`）は透明な画の不透明な所（`AlphaBounds`）
+- ドラッグは ④ のときだけ（`BeginCaptionDrag` / `MoveCaptionDrag` / `EndCaptionDrag`）。決まった位置からつかむと「自由」にして、X/Y を今の字幕の真ん中から始める。真ん中から 16 以内でぴったり真ん中（線を出す）、字幕の枠が画面から出ないよう `SnapAndClamp`。離すとその位置で描き直す

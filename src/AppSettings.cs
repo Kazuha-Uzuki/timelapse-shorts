@@ -25,7 +25,9 @@ public sealed class AppSettings
     public string? Color { get; set; }             // 色のセットの名前（「自由に選ぶ（RGB）」も）
     public string? CustomTextColor { get; set; }   // 自由に選んだ文字の色（"RRGGBB"）
     public string? CustomOutlineColor { get; set; } // 自由に選んだフチ・帯の色（"RRGGBB"）
-    public int Position { get; set; }              // 0 上 / 1 中央 / 2 下
+    public int Position { get; set; }              // 0 上 / 1 中央 / 2 下 / 3 自由（ドラッグ）
+    public string TextX { get; set; } = "540";     // 自由な位置（字幕の真ん中。横 0〜1080）
+    public string TextY { get; set; } = "960";     // 自由な位置（縦 0〜1920）
     public bool TextBack { get; set; }             // 背景あり（帯）
     public string TextSize { get; set; } = "80";
     public bool UseOutputFolder { get; set; }      // true = 決まったフォルダに保存 / false = 元の動画と同じフォルダ
