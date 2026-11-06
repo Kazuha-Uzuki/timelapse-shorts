@@ -29,9 +29,20 @@
         <!-- 手順のボタン（① 動画 ▶ ② 冒頭 …）。押した状態が残り、1つだけ選べる -->
         <Style x:Key="Step" TargetType="RadioButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
             <Setter Property="GroupName" Value="Step"/>
-            <Setter Property="Padding" Value="18,6"/>
+            <Setter Property="Padding" Value="22,6"/>
             <Setter Property="FontSize" Value="15"/>
             <Setter Property="MinWidth" Value="0"/>
+        </Style>
+        <!-- 済んだ手順の ✓。ボタンの右の余白に重ねる（ボタンの文字は変えないので、幅も変わらない） -->
+        <Style x:Key="StepMark" TargetType="TextBlock">
+            <Setter Property="Text" Value="✓"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="IsHitTestVisible" Value="False"/>
+            <Setter Property="Visibility" Value="Hidden"/>
+            <Setter Property="Foreground" Value="{DynamicResource SystemFillColorSuccessBrush}"/>
         </Style>
         <Style x:Key="StepArrow" TargetType="TextBlock">
             <Setter Property="Text" Value="▶"/>
@@ -78,17 +89,31 @@
             <Button x:Name="SettingsButton" DockPanel.Dock="Right" Content="設定" Padding="14,5" VerticalAlignment="Center"
                     Click="SettingsButton_Click"
                     ToolTip="画面の色（ライト／ダーク）・できた動画の保存先・作成が終わったときの動き"/>
-            <!-- 手順のボタンの文字と ✓ は MainWindow.xaml.cs（StepNames）で入れる -->
             <StackPanel x:Name="StepBar" Orientation="Horizontal">
-                <RadioButton x:Name="StepVideo" Style="{StaticResource Step}" Tag="0" IsChecked="True" Checked="Step_Checked"/>
+                <Grid>
+                    <RadioButton x:Name="StepVideo" Style="{StaticResource Step}" Tag="0" Content="① 動画" IsChecked="True" Checked="Step_Checked"/>
+                    <TextBlock x:Name="StepVideoMark" Style="{StaticResource StepMark}"/>
+                </Grid>
                 <TextBlock Style="{StaticResource StepArrow}"/>
-                <RadioButton x:Name="StepIntro" Style="{StaticResource Step}" Tag="1" Checked="Step_Checked"/>
+                <Grid>
+                    <RadioButton x:Name="StepIntro" Style="{StaticResource Step}" Tag="1" Content="② 冒頭" Checked="Step_Checked"/>
+                    <TextBlock x:Name="StepIntroMark" Style="{StaticResource StepMark}"/>
+                </Grid>
                 <TextBlock Style="{StaticResource StepArrow}"/>
-                <RadioButton x:Name="StepBgm" Style="{StaticResource Step}" Tag="2" Checked="Step_Checked"/>
+                <Grid>
+                    <RadioButton x:Name="StepBgm" Style="{StaticResource Step}" Tag="2" Content="③ BGM" Checked="Step_Checked"/>
+                    <TextBlock x:Name="StepBgmMark" Style="{StaticResource StepMark}"/>
+                </Grid>
                 <TextBlock Style="{StaticResource StepArrow}"/>
-                <RadioButton x:Name="StepText" Style="{StaticResource Step}" Tag="3" Checked="Step_Checked"/>
+                <Grid>
+                    <RadioButton x:Name="StepText" Style="{StaticResource Step}" Tag="3" Content="④ テキスト" Checked="Step_Checked"/>
+                    <TextBlock x:Name="StepTextMark" Style="{StaticResource StepMark}"/>
+                </Grid>
                 <TextBlock Style="{StaticResource StepArrow}"/>
-                <RadioButton x:Name="StepMake" Style="{StaticResource Step}" Tag="4" Checked="Step_Checked"/>
+                <Grid>
+                    <RadioButton x:Name="StepMake" Style="{StaticResource Step}" Tag="4" Content="⑤ 作成" Checked="Step_Checked"/>
+                    <TextBlock x:Name="StepMakeMark" Style="{StaticResource StepMark}"/>
+                </Grid>
             </StackPanel>
         </DockPanel>
 

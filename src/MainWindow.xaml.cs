@@ -75,8 +75,6 @@ public partial class MainWindow : Window
     int _step;                                  // 今の手順（0 ① 動画 … 4 ⑤ 作成）
     bool _clipRendering;                        // 動画のプレビューを作っている最中（「動画で見る」が「やめる」になる）
     int _sourceVersion;                         // 動画を入れ替えた回数（① の最初の画の読み込みが古くないか）
-    static readonly string[] StepNames = ["① 動画", "② 冒頭", "③ BGM", "④ テキスト", "⑤ 作成"];
-    readonly TextBlock[] _stepMarks = new TextBlock[5]; // 手順のボタンの ✓（済んだら出す）
 
     // 変換中にPCがスリープして処理が止まるのを防ぐ（画面が消えるのは構わない）
     [DllImport("kernel32.dll")]
@@ -107,19 +105,6 @@ public partial class MainWindow : Window
         StepArea.Children.Remove(IntroParts);
         Intro.LengthContent = LengthCard;
         Intro.FooterContent = IntroFooter;
-
-        // 手順のボタンの文字。✓ は幅のない Canvas に入れて、ボタンの右の余白に出す
-        // （✓ の有無でボタンの幅を変えない。行き来しても並びが動かず、文字が切れることもない）
-        for (int i = 0; i < StepNames.Length; i++)
-        {
-            _stepMarks[i] = new TextBlock { Text = "✓", Visibility = Visibility.Hidden };
-            Canvas.SetLeft(_stepMarks[i], 5);
-            var label = new StackPanel { Orientation = Orientation.Horizontal };
-            label.Children.Add(new TextBlock { Text = StepNames[i] });
-            label.Children.Add(new Canvas { Width = 0, Children = { _stepMarks[i] } });
-            StepButtons[i].Content = label;
-            System.Windows.Automation.AutomationProperties.SetName(StepButtons[i], StepNames[i]);
-        }
 
         // 投稿先ボタン（押した状態が残り、1つだけ選べる）
         foreach (var p in Platforms)
@@ -225,6 +210,8 @@ public partial class MainWindow : Window
     // ---- 手順（① 動画 ▶ ② 冒頭 ▶ ③ BGM ▶ ④ テキスト ▶ ⑤ 作成） ----
 
     RadioButton[] StepButtons => [StepVideo, StepIntro, StepBgm, StepText, StepMake];
+    // 済んだ手順の ✓（ボタンの右の余白に重ねてある。ボタンの文字を変えると幅が最初のままで文字が切れたため、文字は変えない）
+    TextBlock[] StepMarks => [StepVideoMark, StepIntroMark, StepBgmMark, StepTextMark, StepMakeMark];
 
     void Step_Checked(object sender, RoutedEventArgs e)
     {
@@ -277,7 +264,7 @@ public partial class MainWindow : Window
         for (int i = 0; i < StepButtons.Length; i++)
         {
             bool mark = done[i] && i != _step;
-            _stepMarks[i].Visibility = mark ? Visibility.Visible : Visibility.Hidden;
+            StepMarks[i].Visibility = mark ? Visibility.Visible : Visibility.Hidden;
             // 済んだ手順は緑の字（テーマを変えたら、その色に変わる）
             if (mark) StepButtons[i].SetResourceReference(ForegroundProperty, "SystemFillColorSuccessBrush");
             else StepButtons[i].ClearValue(ForegroundProperty);
@@ -285,7 +272,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>テスト用: 手順のボタンの文字（✓ が出ていれば「② 冒頭 ✓」）。</summary>
-    internal string StepLabel(int step) => StepNames[step] + (_stepMarks[step].Visibility == Visibility.Visible ? " ✓" : "");
+    internal string StepLabel(int step) => (string)StepButtons[step].Content + (StepMarks[step].Visibility == Visibility.Visible ? " ✓" : "");
 
     /// <summary>
     /// 左の画（① の最初の画、③④⑤ のプレビュー）の枠を出来上がりと同じ 9:16 にして、使える高さいっぱいに大きくする

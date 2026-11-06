@@ -625,7 +625,6 @@ static class Program
         {
             w.Show();
             AllowLargeWindow(w);
-            ProbeResize(w);
             w.ShowStep(4); // プレビュー欄は ③④⑤ の左
             var setPreview = typeof(MainWindow).GetMethod("SetPreview", F)!;
             Check("プレビュー欄: 最初は案内だけ", w.PreviewImage.Source == null && w.PreviewPlaceholder.IsVisible);
@@ -789,29 +788,6 @@ static class Program
         Check("動画のプレビュー: 「最初」に戻すと静止画（動画は止める）",
             w.PreviewImage.IsVisible && !w.PreviewVideo.IsVisible && w.PreviewCaption.Text.StartsWith("最初")
             && w.PreviewStaleText.Text.Contains("「プレビュー」"), w.PreviewCaption.Text);
-    }
-
-    /// <summary>
-    /// 参考（調べもの）: 手順のボタンと同じ見た目のボタン・ふつうのボタンの文字を長くしたとき、ボタンの幅も広がるか。
-    /// 手順のボタンの文字に ✓ を足していたとき、幅が最初のままで文字が切れたため、どこまで起きるのかを見る。
-    /// </summary>
-    static void ProbeResize(MainWindow w)
-    {
-        string Probe(ButtonBase b)
-        {
-            w.StepBar.Children.Add(b);
-            w.UpdateLayout();
-            double before = b.ActualWidth;
-            b.Content = (string)b.Content + " ✓✓✓";
-            w.UpdateLayout();
-            Pump(TimeSpan.FromMilliseconds(100));
-            string result = $"{before:0.#} → {b.ActualWidth:0.#}";
-            w.StepBar.Children.Remove(b);
-            return result;
-        }
-        var step = new RadioButton { Style = (Style)w.FindResource("Step"), GroupName = "Probe", Content = "① 動画" };
-        Console.WriteLine($"参考  文字を長くしたときのボタンの幅: 手順のボタンと同じ見た目 {Probe(step)}"
-                          + $" / ふつうのボタン {Probe(new Button { Content = "① 動画" })}");
     }
 
     /// <summary>
@@ -1052,13 +1028,19 @@ static class Program
                 if (LayoutInformation.GetLayoutClip(cp) is { } clip
                     && (cp.RenderSize.Width > clip.Bounds.Width + 1 || cp.RenderSize.Height > clip.Bounds.Height + 1))
                     clipped.Add($"ボタン「{(b.Content as string ?? b.Name)}」の文字");
-        // 手順のボタンの ✓ が、ボタンの中（右の余白）に収まっているか
-        var marks = (TextBlock[])typeof(MainWindow).GetField("_stepMarks", F)!.GetValue(w)!;
+        // 手順のボタンの ✓ が、ボタンの右の余白に収まっているか（文字に重ならない・ボタンからはみ出さない）
         RadioButton[] stepButtons = [w.StepVideo, w.StepIntro, w.StepBgm, w.StepText, w.StepMake];
+        TextBlock[] marks = [w.StepVideoMark, w.StepIntroMark, w.StepBgmMark, w.StepTextMark, w.StepMakeMark];
         for (int i = 0; i < stepButtons.Length; i++)
-            if (marks[i].IsVisible
-                && marks[i].TranslatePoint(new Point(marks[i].ActualWidth, 0), stepButtons[i]).X > stepButtons[i].ActualWidth - 1)
-                clipped.Add($"{names[i]} の ✓");
+        {
+            var b = stepButtons[i];
+            if (!marks[i].IsVisible
+                || VisualDescendants(b).OfType<ContentPresenter>().FirstOrDefault(c => c.TemplatedParent == b) is not { } cp) continue;
+            double textRight = cp.TranslatePoint(new Point(cp.ActualWidth, 0), b).X;
+            double markLeft = marks[i].TranslatePoint(new Point(0, 0), b).X, markRight = markLeft + marks[i].ActualWidth;
+            if (markLeft < textRight || markRight > b.ActualWidth - 1)
+                clipped.Add($"{names[i]} の ✓（文字の右 {textRight:0.#} / ✓ {markLeft:0.#}〜{markRight:0.#} / ボタン {b.ActualWidth:0.#}）");
+        }
         // 部品の右下が、窓（スクロールする欄の中なら、その欄の見えている所）に収まっているか
         bool InView(FrameworkElement e)
         {
