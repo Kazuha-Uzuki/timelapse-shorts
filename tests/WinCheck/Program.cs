@@ -865,6 +865,9 @@ static class Program
         w.MoveCaptionDrag(new Point(grab.X + 10 * k, grab.Y + (960 - y0 - 9) * k)); // 真ん中から 横 10・縦 9 ずれた所
         Check("④ 真ん中の近くでは、ぴったり真ん中に合う（真ん中の線も出る）", w.TextXBox.Text == "540" && w.TextYBox.Text == "960"
             && w.GuideV.IsVisible && w.GuideH.IsVisible, $"X {w.TextXBox.Text}・Y {w.TextYBox.Text}");
+        w.MoveCaptionDrag(new Point(grab.X + 10 * k, grab.Y + (1300 - y0) * k)); // 横は真ん中のまま、縦 1300 へ
+        w.UpdateLayout();
+        Shot("step3-字幕をドラッグ中", w.PreviewFrame, w.PreviewFrame.RenderSize); // 位置の表示と、真ん中の線
         w.MoveCaptionDrag(new Point(grab.X - 3000 * k, grab.Y + 3000 * k)); // 左下の外へ
         var clamped = w.CaptionScreenBox();
         Check("④ 画面の外へは出ない", clamped.Left >= -0.5 && clamped.Bottom <= height + 0.5 && !w.GuideV.IsVisible,
