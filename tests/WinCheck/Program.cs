@@ -102,9 +102,9 @@ static class Program
                             && w.PreviewButton.IsEnabled && w.PreviewVideoButton.IsEnabled && w.FilesList.Items.Count == 2
                             && w.FilesTotalText.Text == "2本・合計 1:00:00（名前順につなげて1本にします）",
             $"{w.InfoText.Text} / {w.FilesTotalText.Text}");
-        Check("済んだ手順に ✓", w.StepVideo.Content as string == "① 動画" && w.StepIntro.Content as string == "② 冒頭 ✓"
-                                && w.StepBgm.Content as string == "③ BGM" && w.StepText.Content as string == "④ テキスト",
-            $"{w.StepVideo.Content} / {w.StepIntro.Content} / {w.StepBgm.Content} / {w.StepText.Content}");
+        Check("済んだ手順に ✓", w.StepLabel(0) == "① 動画" && w.StepLabel(1) == "② 冒頭 ✓"
+                                && w.StepLabel(2) == "③ BGM" && w.StepLabel(3) == "④ テキスト",
+            $"{w.StepLabel(0)} / {w.StepLabel(1)} / {w.StepLabel(2)} / {w.StepLabel(3)}");
         Set("_encoder", null);
         Refresh();
         Check("エンコーダーが無くてもプレビューはできる（動画のプレビューは動画を作るのでできない）",
@@ -196,7 +196,7 @@ static class Program
                                       && !w.PreviewButton.IsEnabled, w.InfoText.Text);
         w.CaptionBox.Text = "完成まで3時間";
         Check("テキストあり", w.InfoText.Text.EndsWith("・テキストあり") && w.SampleText.Text == "完成まで3時間"
-                              && w.SumTextText.Text.StartsWith("完成まで3時間・★") && w.StepText.Content as string == "④ テキスト ✓",
+                              && w.SumTextText.Text.StartsWith("完成まで3時間・★") && w.StepLabel(3) == "④ テキスト ✓",
             $"{w.InfoText.Text} / {w.SumTextText.Text}");
         w.SizeBox.Text = "10";
         Check("文字の大きさの範囲", w.InfoText.Text.StartsWith("文字の大きさ") && !w.StartButton.IsEnabled, w.InfoText.Text);
@@ -207,7 +207,7 @@ static class Program
         Set("_bgmSeconds", 120.0);
         Call("ShowBgm");
         Refresh();
-        Check("BGMあり", w.InfoText.Text.Contains("・BGMあり") && w.FadeInBox.IsEnabled && w.StepBgm.Content as string == "③ BGM ✓"
+        Check("BGMあり", w.InfoText.Text.Contains("・BGMあり") && w.FadeInBox.IsEnabled && w.StepLabel(2) == "③ BGM ✓"
                          && w.SumBgmText.Text == "♪ 曲.mp3（2:00）・±0 dB・フェード 0.5／0.5 秒", $"{w.InfoText.Text} / {w.SumBgmText.Text}");
         w.FadeInBox.Text = "100";
         w.FadeOutBox.Text = "100";
@@ -232,10 +232,10 @@ static class Program
         w.ShowStep(2);
         bool bgm = w.BgmStep.Visibility == Visibility.Visible && w.PreviewArea.Visibility == Visibility.Visible
                    && w.SourcePicture.Visibility == Visibility.Collapsed && w.VideoStep.Visibility == Visibility.Collapsed
-                   && w.StepBgm.IsChecked == true && w.StepBgm.Content as string == "③ BGM";
+                   && w.StepBgm.IsChecked == true && w.StepLabel(2) == "③ BGM";
         w.ShowStep(1);
         bool introShown = w.Intro.Visibility == Visibility.Visible && w.PreviewArea.Visibility == Visibility.Collapsed
-                          && w.SourcePicture.Visibility == Visibility.Collapsed && w.StepBgm.Content as string == "③ BGM ✓";
+                          && w.SourcePicture.Visibility == Visibility.Collapsed && w.StepLabel(2) == "③ BGM ✓";
         w.ShowStep(0);
         Check("手順の切り替え", bgm && introShown && w.VideoStep.Visibility == Visibility.Visible && w.StepVideo.IsChecked == true);
     }
@@ -625,6 +625,7 @@ static class Program
         {
             w.Show();
             AllowLargeWindow(w);
+            ProbeResize(w);
             w.ShowStep(4); // プレビュー欄は ③④⑤ の左
             var setPreview = typeof(MainWindow).GetMethod("SetPreview", F)!;
             Check("プレビュー欄: 最初は案内だけ", w.PreviewImage.Source == null && w.PreviewPlaceholder.IsVisible);
@@ -791,9 +792,33 @@ static class Program
     }
 
     /// <summary>
-    /// ② 冒頭に、本物の動画（明るさが時刻で決まる 30 秒＋30 秒の 2 本）を入れる。総尺 5 秒なら 12 倍速で、
-    /// 冒頭 1 秒は元の動画の最後の 12 秒。元の動画が出るか（ここで再生できる、またはバーの位置の画）、
-    /// 画は正しい時刻か（20 秒目なら明るさ 16 + 20×7）を確かめる。
+    /// 参考（調べもの）: 手順のボタンと同じ見た目のボタン・ふつうのボタンの文字を長くしたとき、ボタンの幅も広がるか。
+    /// 手順のボタンの文字に ✓ を足していたとき、幅が最初のままで文字が切れたため、どこまで起きるのかを見る。
+    /// </summary>
+    static void ProbeResize(MainWindow w)
+    {
+        string Probe(ButtonBase b)
+        {
+            w.StepBar.Children.Add(b);
+            w.UpdateLayout();
+            double before = b.ActualWidth;
+            b.Content = (string)b.Content + " ✓✓✓";
+            w.UpdateLayout();
+            Pump(TimeSpan.FromMilliseconds(100));
+            string result = $"{before:0.#} → {b.ActualWidth:0.#}";
+            w.StepBar.Children.Remove(b);
+            return result;
+        }
+        var step = new RadioButton { Style = (Style)w.FindResource("Step"), GroupName = "Probe", Content = "① 動画" };
+        Console.WriteLine($"参考  文字を長くしたときのボタンの幅: 手順のボタンと同じ見た目 {Probe(step)}"
+                          + $" / ふつうのボタン {Probe(new Button { Content = "① 動画" })}");
+    }
+
+    /// <summary>
+    /// ② 冒頭に、本物の動画 2 本（1 本目は色のあるテスト画面、2 本目は明るさが時刻で決まる動画。どちらも 30 秒）を入れる。
+    /// 総尺 5 秒なら 12 倍速で、冒頭 1 秒は元の動画の最後の 12 秒。元の動画が出るか（ここで再生できる、またはバーの位置の画）、
+    /// 画は正しい時刻か（つないだ 50 秒目＝2 本目の 20 秒目なら、明るさ 16 + 20×7）を確かめる。
+    /// ① のスクリーンショットには、1 本目の最初の画（色のあるテスト画面）が写る。
     /// </summary>
     static void CheckIntroMedia(MainWindow w)
     {
@@ -805,7 +830,7 @@ static class Program
         var files = (List<string>)typeof(MainWindow).GetField("_files", F)!.GetValue(w)!;
         var durations = (Dictionary<string, double>)typeof(MainWindow).GetField("_durations", F)!.GetValue(w)!;
         files.Clear();
-        files.AddRange([_ramp, _video2]);
+        files.AddRange([_video2, _ramp]);
         durations[_ramp] = 30;
         durations[_video2] = 30;
         typeof(MainWindow).GetMethod("RefreshList", F)!.Invoke(w, null);
@@ -842,13 +867,14 @@ static class Program
         bool Idle() => !(bool)typeof(IntroPanel).GetField("_rendering", F)!.GetValue(intro)!
                        && typeof(IntroPanel).GetField("_wantFrame", F)!.GetValue(intro) == null;
         typeof(IntroPanel).GetMethod("UseFrames", F)!.Invoke(intro, ["（テスト）バーの位置の画を出しています"]);
-        typeof(IntroPanel).GetMethod("SeekTo", F)!.Invoke(intro, [20.0]);
+        typeof(IntroPanel).GetMethod("SeekTo", F)!.Invoke(intro, [50.0]);
         intro.FrameImage.Source = null;
         bool drawn = Wait(() => Idle() && intro.FrameImage.Source != null, 15);
         double luma = drawn ? Luma((BitmapSource)intro.FrameImage.Source!) : double.NaN;
-        Check("② 冒頭: バーの位置（20 秒目）の画を描ける", drawn && Math.Abs((luma - 16) / 7 - 20) < 1.5,
+        Check("② 冒頭: バーの位置（50 秒目＝2 本目の 20 秒目）の画を描ける", drawn && Math.Abs((luma - 16) / 7 - 20) < 1.5,
             $"{(luma - 16) / 7:0.0} 秒の明るさ");
-        typeof(IntroPanel).GetMethod("SeekTo", F)!.Invoke(intro, [59.0]); // 写すときは、色のある 2 本目の終わりあたり
+        typeof(IntroPanel).GetMethod("SeekTo", F)!.Invoke(intro, [25.0]); // 写すときは、色のある 1 本目
+        typeof(IntroPanel).GetMethod("Refresh", F)!.Invoke(intro, null);   // 時刻の表示も合わせる（バーを動かしたときと同じ）
         intro.FrameImage.Source = null;
         Wait(() => Idle() && intro.FrameImage.Source != null, 15);
     }
@@ -1020,6 +1046,19 @@ static class Program
             .Where(e => e.IsVisible && LayoutInformation.GetLayoutClip(e) != null && e is not MediaElement)
             .Select(e => !string.IsNullOrEmpty(e.Name) ? e.Name : e is TextBlock t ? $"「{t.Text}」" : e.GetType().Name)
             .ToList();
+        // ボタンの文字はテンプレートの中（論理ツリーに無い）なので別に見る: 文字がボタンに収まらず切れていないか
+        foreach (var b in Descendants(root).OfType<ButtonBase>().Where(b => b.IsVisible))
+            foreach (var cp in VisualDescendants(b).OfType<ContentPresenter>().Where(c => c.TemplatedParent == b))
+                if (LayoutInformation.GetLayoutClip(cp) is { } clip
+                    && (cp.RenderSize.Width > clip.Bounds.Width + 1 || cp.RenderSize.Height > clip.Bounds.Height + 1))
+                    clipped.Add($"ボタン「{(b.Content as string ?? b.Name)}」の文字");
+        // 手順のボタンの ✓ が、ボタンの中（右の余白）に収まっているか
+        var marks = (TextBlock[])typeof(MainWindow).GetField("_stepMarks", F)!.GetValue(w)!;
+        RadioButton[] stepButtons = [w.StepVideo, w.StepIntro, w.StepBgm, w.StepText, w.StepMake];
+        for (int i = 0; i < stepButtons.Length; i++)
+            if (marks[i].IsVisible
+                && marks[i].TranslatePoint(new Point(marks[i].ActualWidth, 0), stepButtons[i]).X > stepButtons[i].ActualWidth - 1)
+                clipped.Add($"{names[i]} の ✓");
         // 部品の右下が、窓（スクロールする欄の中なら、その欄の見えている所）に収まっているか
         bool InView(FrameworkElement e)
         {
@@ -1059,6 +1098,17 @@ static class Program
         {
             yield return child;
             foreach (var d in Descendants(child)) yield return d;
+        }
+    }
+
+    /// <summary>見た目の木（テンプレートの中も）の子孫。</summary>
+    static IEnumerable<DependencyObject> VisualDescendants(DependencyObject parent)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            yield return child;
+            foreach (var d in VisualDescendants(child)) yield return d;
         }
     }
 

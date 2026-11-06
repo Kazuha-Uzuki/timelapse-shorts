@@ -30,6 +30,7 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
   ログの行頭に BOM（EF BB BF）が混ざることがあるので取り除いてから、`SHOT <名前> ` を外してつなげ、`base64 -d` する。
 - 画面を変えたら、WinCheck の「画面の配置」（手順ごとに、標準 1480×720 / 最小 1240×650 / 最大化 1920×1030 で切れている部品がない・左の画が 9:16・大事な部品が見えている）が通ることと、スクリーンショット（`step0`〜`step4`）の見た目を確かめてから main に入れる。
   切れているかは `LayoutInformation.GetLayoutClip` で見るので、狭いときに長くなる欄は `ScrollViewer` に入れる（中は切れたことにならない）。
+  論理ツリーの部品に加えて、ボタンの文字（テンプレートの中の ContentPresenter）も見る。手順のボタンの ✓ は、文字に足すと幅が最初の表示のままで文字が切れたので、幅のない Canvas に入れて右の余白に出している（ボタンの幅は変わらない）。
 - `Ffmpeg.cs` は Linux でも試せる: net10.0 のコンソールで `<Compile Include="…/src/Ffmpeg.cs" />` し、出力フォルダに `ffmpeg.exe` / `ffprobe.exe` という名前で Linux の ffmpeg / ffprobe へのリンクを置く（libass 入りの ffmpeg なら文字入れも試せる）。
 
 ## リリース（配布）

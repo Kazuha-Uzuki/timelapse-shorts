@@ -76,6 +76,7 @@ public partial class MainWindow : Window
     bool _clipRendering;                        // 動画のプレビューを作っている最中（「動画で見る」が「やめる」になる）
     int _sourceVersion;                         // 動画を入れ替えた回数（① の最初の画の読み込みが古くないか）
     static readonly string[] StepNames = ["① 動画", "② 冒頭", "③ BGM", "④ テキスト", "⑤ 作成"];
+    readonly TextBlock[] _stepMarks = new TextBlock[5]; // 手順のボタンの ✓（済んだら出す）
 
     // 変換中にPCがスリープして処理が止まるのを防ぐ（画面が消えるのは構わない）
     [DllImport("kernel32.dll")]
@@ -106,6 +107,19 @@ public partial class MainWindow : Window
         StepArea.Children.Remove(IntroParts);
         Intro.LengthContent = LengthCard;
         Intro.FooterContent = IntroFooter;
+
+        // 手順のボタンの文字。✓ は幅のない Canvas に入れて、ボタンの右の余白に出す
+        // （✓ の有無でボタンの幅を変えない。行き来しても並びが動かず、文字が切れることもない）
+        for (int i = 0; i < StepNames.Length; i++)
+        {
+            _stepMarks[i] = new TextBlock { Text = "✓", Visibility = Visibility.Hidden };
+            Canvas.SetLeft(_stepMarks[i], 5);
+            var label = new StackPanel { Orientation = Orientation.Horizontal };
+            label.Children.Add(new TextBlock { Text = StepNames[i] });
+            label.Children.Add(new Canvas { Width = 0, Children = { _stepMarks[i] } });
+            StepButtons[i].Content = label;
+            System.Windows.Automation.AutomationProperties.SetName(StepButtons[i], StepNames[i]);
+        }
 
         // 投稿先ボタン（押した状態が残り、1つだけ選べる）
         foreach (var p in Platforms)
@@ -260,15 +274,18 @@ public partial class MainWindow : Window
             TextCheck.IsChecked == true && !string.IsNullOrWhiteSpace(CaptionBox.Text),
             false,
         ];
-        var success = TryFindResource("SystemFillColorSuccessBrush") as Brush;
         for (int i = 0; i < StepButtons.Length; i++)
         {
             bool mark = done[i] && i != _step;
-            StepButtons[i].Content = StepNames[i] + (mark ? " ✓" : "");
-            if (mark && success != null) StepButtons[i].Foreground = success;
+            _stepMarks[i].Visibility = mark ? Visibility.Visible : Visibility.Hidden;
+            // 済んだ手順は緑の字（テーマを変えたら、その色に変わる）
+            if (mark) StepButtons[i].SetResourceReference(ForegroundProperty, "SystemFillColorSuccessBrush");
             else StepButtons[i].ClearValue(ForegroundProperty);
         }
     }
+
+    /// <summary>テスト用: 手順のボタンの文字（✓ が出ていれば「② 冒頭 ✓」）。</summary>
+    internal string StepLabel(int step) => StepNames[step] + (_stepMarks[step].Visibility == Visibility.Visible ? " ✓" : "");
 
     /// <summary>
     /// 左の画（① の最初の画、③④⑤ のプレビュー）の枠を出来上がりと同じ 9:16 にして、使える高さいっぱいに大きくする
@@ -595,7 +612,8 @@ public partial class MainWindow : Window
         SumVideoText.Text = (_files.Count == 0 ? "まだ入れていません" : $"{_files.Count}本・合計 {Fmt(_totalSeconds)}")
                             + (BlurRadio.IsChecked == true ? "・横向きは全体を残す（ぼかした背景）" : "・横向きは中央を切り抜く");
         var intro = Intro.Choice;
-        string length = $"{_platform.Name} {LengthBox.Text}"
+        // 総尺は「179」と打っても「2:59」の書き方で出す（読めないときは打ったまま）
+        string length = $"{_platform.Name} {(s != null ? Fmt(s.Target) : LengthBox.Text)}"
                         + (s != null && _totalSeconds > 0 ? $"（{Ffmpeg.MainFactor(s.Intro, _totalSeconds, s.Target):0.#}倍速）" : "");
         SumIntroText.Text = length + (!intro.Enabled ? "・冒頭なし"
             : s?.Intro is { } i ? $"・{Fmt(i.Start)}〜{Fmt(i.End)} を冒頭 {i.Seconds:0.#} 秒に・{(i.Copy ? "コピー" : "移す")}"
