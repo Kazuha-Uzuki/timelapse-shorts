@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:sys="clr-namespace:System;assembly=System.Runtime"
         xmlns:local="clr-namespace:TimelapseShorts"
-        Title="タイムラプス縦動画メーカー" Width="1480" Height="720" MinWidth="1240" MinHeight="650"
+        Title="KZHタイムラプス" Width="1480" Height="720" MinWidth="1240" MinHeight="650"
         WindowStartupLocation="CenterScreen" AllowDrop="True"
         DragOver="Window_DragOver" Drop="Window_Drop" Loaded="Window_Loaded"
         FontFamily="Yu Gothic UI" FontSize="14"

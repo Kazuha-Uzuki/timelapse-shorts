@@ -8,8 +8,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Linux/macOS 上でもコンパイル確認できるようにする（実行はWindowsのみ） -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- アプリの名前は「KZHタイムラプス」（旧名: タイムラプス縦動画メーカー）。exe の名前・設定のフォルダは前のまま -->
     <AssemblyName>TimelapseShorts</AssemblyName>
-    <Product>タイムラプス縦動画メーカー</Product>
+    <Product>KZHタイムラプス</Product>
+    <AssemblyTitle>KZHタイムラプス</AssemblyTitle>
     <Version>1.0.0</Version>
     <!-- ダークモードに使う ThemeMode（Fluent テーマ）は .NET 10 では試験的な扱い。分かったうえで使う -->
     <NoWarn>$(NoWarn);WPF0001</NoWarn>

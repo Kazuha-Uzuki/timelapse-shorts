@@ -62,6 +62,7 @@ static class Program
         try { w = new MainWindow(); }
         catch (Exception ex) { Check("画面を作れる", false, ex.ToString()); return; }
         Check("画面を作れる", true);
+        Check("アプリの名前（窓の上）", w.Title == "KZHタイムラプス", w.Title);
         _window = w;
 
         T Get<T>(string field) => (T)typeof(MainWindow).GetField(field, F)!.GetValue(w)!;

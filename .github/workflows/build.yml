@@ -33,6 +33,12 @@ jobs:
           -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
           -p:DebugType=none -o dist
 
+      - name: exe の名前の情報を表示（エクスプローラーのプロパティやタスクマネージャーに出る名前）
+        shell: pwsh
+        run: |
+          $v = (Get-Item dist\TimelapseShorts.exe).VersionInfo
+          Write-Host "製品名: $($v.ProductName) / ファイルの説明: $($v.FileDescription)"
+
       - name: LGPL版 FFmpeg を取得
         shell: pwsh
         run: |
