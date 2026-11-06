@@ -9,10 +9,10 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 |---|---|
 | `src/Ffmpeg.cs` | 変換ロジック（エンコーダー検出・間引き・冒頭移動・HDR・縦長化・BGM・文字入れ・プレビュー）。WPF に依存しない |
 | `src/FontCatalog.cs` | フォント一覧と、libass に渡すフォントファイル・ファミリー名の解決（WPF） |
-| `src/MainWindow.xaml(.cs)` | 画面。投稿先の上限は `Platforms`（2026年10月時点の値） |
+| `src/MainWindow.xaml(.cs)` | 画面。上の手順のボタン（① 動画 ▶ ② 冒頭 ▶ ③ BGM ▶ ④ テキスト ▶ ⑤ 作成）で画面を切り替える（`ShowStep`）。左に 9:16 の画（① は元の動画の最初、③④⑤ は出来上がりのプレビュー）、右に設定のカード。投稿先の上限は `Platforms`（2026年10月時点の値） |
 | `src/SettingsWindow.xaml(.cs)` | 「設定」の小さな画面（画面の色・保存先・作成が終わったとき）と、テーマを切り替える `ApplyTheme` |
-| `src/IntroWindow.xaml(.cs)` | 「冒頭を選ぶ…」の画面（元の動画・選びかた・移す／コピー・冒頭の長さとフェード・2 本のバー）と、選んだ内容 `IntroChoice` |
-| `src/RangeBar.cs` | その画面の横長のバー（目盛り・選んだ範囲・今の位置。ドラッグで範囲を選ぶ） |
+| `src/IntroPanel.xaml(.cs)` | ② 冒頭（元の動画・秒数⇄範囲の連動・移す／コピー・フェード・2 本のバー）と、覚える内容 `IntroChoice`。「長さ・投稿先」のカードと「戻る／次へ」は MainWindow.xaml の `IntroParts` に書き、MainWindow のコンストラクターで `LengthContent` / `FooterContent` へ移す（XAML で作った UserControl の中身に名前付きの部品を書くと MC3093 になるため。名前は MainWindow のもの） |
+| `src/RangeBar.cs` | ② の横長のバー（目盛り・選んだ範囲・今の位置）。ドラッグで範囲を選ぶ・範囲ごとずらす・両端の調整。どう動かしたかを知らせるだけで、長さは IntroPanel が決める |
 | `src/SleepWindow.xaml(.cs)` | 「終わったら PC をスリープ」の 60 秒のお知らせ（true を返したら呼んだ側が `SetSuspendState`） |
 | `src/AppSettings.cs` | 前回の設定（`%LOCALAPPDATA%\TimelapseShorts\settings.json`）。閉じるときと設定画面を閉じたときに書く |
 | `tests/WinCheck` | CI の Windows で、画面と変換を実際に動かして確かめるテスト |
@@ -28,7 +28,8 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
 - 結果は `gh api repos/Kazuha-Uzuki/timelapse-shorts/actions/jobs/<job id>/logs` で読む。WinCheck は `OK  ` / `NG  ` の行を出し、最後に「すべて OK」か「NG が N 件」を出す。
 - `screenshots=true` のときだけ、画面の PNG を `SHOT <名前> <Base64>` の行（4000 文字ずつ）でログに出す。
   ログの行頭に BOM（EF BB BF）が混ざることがあるので取り除いてから、`SHOT <名前> ` を外してつなげ、`base64 -d` する。
-- 画面を変えたら、WinCheck の「画面の配置」（標準 1480×720 / 最小 1240×650 / 最大化 1920×1030 で切れている部品がない・プレビュー枠が 9:16）が通ることと、スクリーンショットの見た目を確かめてから main に入れる。
+- 画面を変えたら、WinCheck の「画面の配置」（手順ごとに、標準 1480×720 / 最小 1240×650 / 最大化 1920×1030 で切れている部品がない・左の画が 9:16・大事な部品が見えている）が通ることと、スクリーンショット（`step0`〜`step4`）の見た目を確かめてから main に入れる。
+  切れているかは `LayoutInformation.GetLayoutClip` で見るので、狭いときに長くなる欄は `ScrollViewer` に入れる（中は切れたことにならない）。
 - `Ffmpeg.cs` は Linux でも試せる: net10.0 のコンソールで `<Compile Include="…/src/Ffmpeg.cs" />` し、出力フォルダに `ffmpeg.exe` / `ffprobe.exe` という名前で Linux の ffmpeg / ffprobe へのリンクを置く（libass 入りの ffmpeg なら文字入れも試せる）。
 
 ## リリース（配布）
@@ -53,7 +54,10 @@ WPF / .NET 10（`net10.0-windows`）。利用者は一般の人なので、画�
   完成品のフェード（`IntroFades`）は、つなぐ前の冒頭の側だけにコマ数で `fade` をかける（`fade=t=out` はそのあとのコマを全部黒にするので、
   つないだあとにはかけない）。文字はそのあとで全体に描くのでフェードしない。10 ビット（HDR）のままかかる。静止画のプレビューには出ない。
   WinCheck は、明るさが時刻で決まる動画（`geq=lum='16+T*7'`）で、各コマの明るさから元の秒を読んで `SourceTime` と比べる。
-- 冒頭を選ぶ画面: 見ながら選んだ範囲は動画ごとなので覚えない（動画を入れ替えたら選び直し。`RefreshList`）。選びかた・長さ・移す／コピー・フェードは覚える。
+- ② 冒頭: 冒頭は本編と同じ速さ（`IntroPanel.Speed`。移すなら 元の長さ÷総尺、コピーなら 元の長さ÷(総尺−秒数)）。範囲の長さ = 秒数 × 速さ
+  （`SourceLength`、逆は `SecondsFor`）。秒数は 0.1 秒刻み・1 秒〜`MaxSeconds`。バーで端を動かすと秒数が決まり（`EditRange`。動かさない端はそのまま）、
+  秒数を入れたり倍速が変わったり（移す／コピー・総尺）したら、範囲の終わりはそのままで始まりを動かす（`RangeFromEnd`）。範囲ごとずらすのは `MoveRange`。
+  範囲は動画ごとなので覚えない（動画を入れ替えたら「最後の ○ 秒」。`SetSource`）。オンオフ・秒数・移す／コピー・フェードは覚える。
   動画は `MediaElement` で再生し、開けない（HEVC の拡張機能が無いなど）か HDR なら、バーの位置の画を `RenderSourceFrameAsync` で描く
   （描いている途中に動かしたら、終わってから最後の位置だけを描く）。複数ファイルは、その時刻を含むファイルを開き、終わったら次へ。
 - 複数ファイルは concat の連結リストに `duration` を書く（無いと途中へ移動できず遅い）。

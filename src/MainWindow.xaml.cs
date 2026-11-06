@@ -72,7 +72,10 @@ public partial class MainWindow : Window
     string _clipCaption = "";                   // 「最初の 7 秒・音つき・12 秒で作成」
     bool _clipPaused, _clipEnded;               // 一時停止中か・最後まで見たか
     readonly AppSettings _settings = AppSettings.Load(); // 前回の設定（閉じるときに今の設定を書く）
-    IntroChoice _intro = new(false, 0, 0, "5", false, "0.3", "0.3"); // 冒頭に持ってくる部分（「冒頭を選ぶ…」の画面で選ぶ）
+    int _step;                                  // 今の手順（0 ① 動画 … 4 ⑤ 作成）
+    bool _clipRendering;                        // 動画のプレビューを作っている最中（「動画で見る」が「やめる」になる）
+    int _sourceVersion;                         // 動画を入れ替えた回数（① の最初の画の読み込みが古くないか）
+    static readonly string[] StepNames = ["① 動画", "② 冒頭", "③ BGM", "④ テキスト", "⑤ 作成"];
 
     // 変換中にPCがスリープして処理が止まるのを防ぐ（画面が消えるのは構わない）
     [DllImport("kernel32.dll")]
@@ -98,6 +101,12 @@ public partial class MainWindow : Window
         MinWidth = Math.Min(MinWidth, Width);
         MinHeight = Math.Min(MinHeight, Height);
 
+        // ② の「長さ・投稿先」と「戻る／次へ」を IntroPanel の中へ移す（MainWindow.xaml の IntroParts を参照）
+        IntroParts.Children.Clear();
+        StepArea.Children.Remove(IntroParts);
+        Intro.LengthContent = LengthCard;
+        Intro.FooterContent = IntroFooter;
+
         // 投稿先ボタン（押した状態が残り、1つだけ選べる）
         foreach (var p in Platforms)
         {
@@ -121,6 +130,7 @@ public partial class MainWindow : Window
 
         try { FontBox.ItemsSource = FontCatalog.Load(); }
         catch (Exception ex) { StatusText.Text = "フォントの一覧を読み込めませんでした: " + ex.Message; }
+        Intro.Changed += RefreshInfo;
         FontBox.SelectedIndex = 0;
         ColorBox.ItemsSource = ColorPresets;
         ColorBox.SelectedIndex = 0;
@@ -131,6 +141,7 @@ public partial class MainWindow : Window
         _ready = true;
         ((RadioButton)PlatformPanel.Children[0]).IsChecked = true;
         RestoreSettings();
+        RefreshList(); // 一覧・合計などの最初の表示
 
         // 前に落ちたときなどに残った、動画のプレビューの一時ファイルを片付ける
         // （1 時間より前のものだけ。ほかに開いているこのアプリが再生中のものは、使用中なので消えない）
@@ -153,9 +164,8 @@ public partial class MainWindow : Window
             button.IsChecked = true;
             if (a.Length != null) LengthBox.Text = a.Length; // 投稿先を選ぶと総尺が初期値になるので、そのあとで戻す
         }
-        IntroCheck.IsChecked = a.Intro;
-        // 見ながら選んだ範囲は動画ごとなので覚えない（選びかたは覚える）
-        _intro = new IntroChoice(a.IntroPick, 0, 0, a.IntroSeconds, a.IntroCopy, a.IntroFadeIn, a.IntroFadeOut);
+        // 冒頭の範囲は動画ごとなので覚えない（秒数・持っていきかた・フェードは覚える）
+        Intro.Restore(new IntroChoice(a.Intro, a.IntroSeconds, a.IntroCopy, a.IntroFadeIn, a.IntroFadeOut));
         (a.Blur ? BlurRadio : CropRadio).IsChecked = true;
         FadeInBox.Text = a.FadeIn;
         FadeOutBox.Text = a.FadeOut;
@@ -173,12 +183,12 @@ public partial class MainWindow : Window
         var a = _settings;
         a.Platform = _platform.Key;
         a.Length = LengthBox.Text;
-        a.Intro = IntroCheck.IsChecked == true;
-        a.IntroPick = _intro.Pick;
-        a.IntroSeconds = _intro.Seconds;
-        a.IntroCopy = _intro.Copy;
-        a.IntroFadeIn = _intro.FadeIn;
-        a.IntroFadeOut = _intro.FadeOut;
+        var intro = Intro.Choice;
+        a.Intro = intro.Enabled;
+        a.IntroSeconds = intro.Seconds;
+        a.IntroCopy = intro.Copy;
+        a.IntroFadeIn = intro.FadeIn;
+        a.IntroFadeOut = intro.FadeOut;
         a.Blur = BlurRadio.IsChecked == true;
         a.FadeIn = FadeInBox.Text;
         a.FadeOut = FadeOutBox.Text;
@@ -195,22 +205,91 @@ public partial class MainWindow : Window
     {
         new SettingsWindow(_settings) { Owner = this }.ShowDialog();
         _settings.Save(); // 色を変えたらすぐ覚える（このあと落ちても次は同じ色で開く）
+        RefreshInfo();    // 保存先が変わったかもしれない
     }
 
-    void IntroButton_Click(object sender, RoutedEventArgs e)
+    // ---- 手順（① 動画 ▶ ② 冒頭 ▶ ③ BGM ▶ ④ テキスト ▶ ⑤ 作成） ----
+
+    RadioButton[] StepButtons => [StepVideo, StepIntro, StepBgm, StepText, StepMake];
+
+    void Step_Checked(object sender, RoutedEventArgs e)
     {
-        if (!TryParseSeconds(LengthBox.Text, out int target)) return;
-        var w = new IntroWindow(_files, _files.Select(f => _durations[f]).ToList(), target, _intro) { Owner = this };
-        if (w.ShowDialog() != true) return;
-        _intro = w.Result;
-        RefreshInfo();
+        if (!_ready) return;
+        ShowStep(int.Parse((string)((FrameworkElement)sender).Tag, CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>「次へ」「戻る」「変える」。Tag の手順へ。</summary>
+    void GoStep_Click(object sender, RoutedEventArgs e) =>
+        ShowStep(int.Parse((string)((FrameworkElement)sender).Tag, CultureInfo.InvariantCulture));
+
+    /// <summary>手順の画面を切り替える。左の画は、① は元の動画の最初、③④⑤ は出来上がりのプレビュー（② は IntroPanel の中）。</summary>
+    internal void ShowStep(int step)
+    {
+        _step = step;
+        if (StepButtons[step].IsChecked != true) StepButtons[step].IsChecked = true; // Step_Checked からもう一度呼ばれる
+        var show = (bool b) => b ? Visibility.Visible : Visibility.Collapsed;
+        SourcePicture.Visibility = show(step == 0);
+        PreviewArea.Visibility = show(step >= 2);
+        VideoStep.Visibility = show(step == 0);
+        Intro.Visibility = show(step == 1);
+        BgmStep.Visibility = show(step == 2);
+        TextStep.Visibility = show(step == 3);
+        MakeStep.Visibility = show(step == 4);
+        if (step == 1) Intro.Activate();
+        else Intro.Deactivate();
+        // プレビュー欄が見えなくなるなら、動画のプレビューは止める（音だけ鳴り続けないように）
+        if (step < 2 && PreviewVideo.Visibility == Visibility.Visible && !_clipPaused && !_clipEnded)
+        {
+            PreviewVideo.Pause();
+            _clipPaused = true;
+            PreviewReplayText.Text = "▶ クリックで続き";
+            PreviewReplay.Visibility = Visibility.Visible;
+        }
+        UpdateStepMarks();
+    }
+
+    /// <summary>済んだ手順に ✓ を付ける（BGM・テキストは入れたとき）。</summary>
+    void UpdateStepMarks()
+    {
+        bool hasVideo = _files.Count > 0 && _totalSeconds > 0;
+        bool[] done =
+        [
+            hasVideo,
+            hasVideo && TryParseSeconds(LengthBox.Text, out int t) && t >= 1 && t <= _platform.MaxSeconds && Intro.Build(out _) == null,
+            _bgmFile != null,
+            TextCheck.IsChecked == true && !string.IsNullOrWhiteSpace(CaptionBox.Text),
+            false,
+        ];
+        var success = TryFindResource("SystemFillColorSuccessBrush") as Brush;
+        for (int i = 0; i < StepButtons.Length; i++)
+        {
+            bool mark = done[i] && i != _step;
+            StepButtons[i].Content = StepNames[i] + (mark ? " ✓" : "");
+            if (mark && success != null) StepButtons[i].Foreground = success;
+            else StepButtons[i].ClearValue(ForegroundProperty);
+        }
+    }
+
+    /// <summary>
+    /// 左の画（① の最初の画、③④⑤ のプレビュー）の枠を出来上がりと同じ 9:16 にして、使える高さいっぱいに大きくする
+    /// （横は全体の 4 割まで）。
+    /// </summary>
+    void PictureHolder_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var holder = (FrameworkElement)sender;
+        if (!holder.IsVisible || holder.ActualHeight <= 0) return;
+        var frame = holder == PreviewHolder ? PreviewFrame : SourceFrame;
+        double width = Math.Min(holder.ActualHeight * 9 / 16, Math.Max(160, StepArea.ActualWidth * 0.4));
+        if (Math.Abs(PictureColumn.Width.Value - width) > 0.5) PictureColumn.Width = new GridLength(width);
+        frame.Width = width;
+        frame.Height = width * 16 / 9;
     }
 
     async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         if (!Ffmpeg.IsAvailable)
         {
-            StatusText.Text = "ffmpeg.exe / ffprobe.exe が見つかりません。このアプリと同じフォルダに置いてください。";
+            StatusText.Text = FilesStatusText.Text = "ffmpeg.exe / ffprobe.exe が見つかりません。このアプリと同じフォルダに置いてください。";
             AddButton.IsEnabled = false;
             return;
         }
@@ -250,9 +329,17 @@ public partial class MainWindow : Window
     async void Window_Drop(object sender, DragEventArgs e)
     {
         if (_busy || e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
-        // 音楽ファイルは BGM に、それ以外は動画として受け取る
-        if (paths.FirstOrDefault(IsAudio) is { } audio) await SetBgmAsync(audio);
-        if (paths.Where(p => !IsAudio(p)).ToArray() is { Length: > 0 } videos) await AddFilesAsync(videos);
+        // 音楽ファイルは BGM に、それ以外は動画として受け取る。入れたものの手順を見せる
+        if (paths.FirstOrDefault(IsAudio) is { } audio)
+        {
+            ShowStep(2);
+            await SetBgmAsync(audio);
+        }
+        if (paths.Where(p => !IsAudio(p)).ToArray() is { Length: > 0 } videos)
+        {
+            ShowStep(0);
+            await AddFilesAsync(videos);
+        }
     }
 
     async void BgmSelectButton_Click(object sender, RoutedEventArgs e)
@@ -274,6 +361,7 @@ public partial class MainWindow : Window
 
     async Task SetBgmAsync(string file)
     {
+        BgmStatusText.Text = "";
         try
         {
             _bgmSeconds = await Ffmpeg.GetAudioDurationAsync(file);
@@ -285,7 +373,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = ex.Message;
+            BgmStatusText.Text = ex.Message;
         }
         if (_measuringFile == file) _measuringFile = null;
         ShowBgm();
@@ -373,7 +461,7 @@ public partial class MainWindow : Window
             .ToList();
         if (files.Count == 0) return;
 
-        StatusText.Text = "動画の長さを読み込み中…";
+        FilesStatusText.Text = "動画の長さを読み込み中…";
         SetBusy(true, cancellable: false);
         var skipped = new List<string>();
         foreach (var f in files)
@@ -389,17 +477,46 @@ public partial class MainWindow : Window
             }
         }
         _files.Sort(StringComparer.CurrentCultureIgnoreCase);
-        _totalSeconds = _files.Sum(f => _durations[f]);
-        StatusText.Text = skipped.Count == 0 ? "" : "動画として読み込めなかったので除外: " + string.Join(", ", skipped);
+        FilesStatusText.Text = skipped.Count == 0 ? "" : "動画として読み込めなかったので除外: " + string.Join(", ", skipped);
         SetBusy(false);
         RefreshList();
     }
 
+    /// <summary>① の一覧の 1 行。</summary>
+    internal sealed record FileRow(string Name, string Length);
+
+    /// <summary>動画を入れ替えた。一覧・合計・② の範囲（最後の ○ 秒から選び直す）・① の最初の画を新しくする。</summary>
     void RefreshList()
     {
-        _intro = _intro with { Start = 0, End = 0 }; // 動画が変わったら、見ながら選んだ範囲は選び直す
-        FilesList.ItemsSource = _files.Select(f => System.IO.Path.GetFileName(f)).ToList();
+        var durations = _files.Select(f => _durations.TryGetValue(f, out double d) ? d : 0).ToList();
+        _totalSeconds = durations.Sum();
+        FilesList.ItemsSource = _files.Select((f, i) => new FileRow(System.IO.Path.GetFileName(f), Fmt(durations[i]))).ToList();
+        FilesTotalText.Text = _files.Count == 0 ? "（まだ入れていません）"
+            : $"{_files.Count}本・合計 {Fmt(_totalSeconds)}" + (_files.Count > 1 ? "（名前順につなげて1本にします）" : "");
+        Intro.SetSource(_files, durations);
+        ShowSourceFrame(durations);
         RefreshInfo();
+    }
+
+    /// <summary>① の左に、入れた動画の最初の画を出す（作れなくても、ほかには困らないので何も言わない）。</summary>
+    async void ShowSourceFrame(List<double> durations)
+    {
+        int version = ++_sourceVersion;
+        SourceImage.Source = null;
+        SourcePlaceholder.Text = _files.Count == 0 ? "動画を入れると、ここに最初の画が出ます" : "最初の画を作っています…";
+        SourcePlaceholder.Visibility = Visibility.Visible;
+        if (_files.Count == 0 || !Ffmpeg.IsAvailable) return;
+        try
+        {
+            byte[] png = await Ffmpeg.RenderSourceFrameAsync(_files.ToList(), durations, 0, 720, CancellationToken.None);
+            if (version != _sourceVersion) return;
+            SourceImage.Source = LoadPng(png);
+            SourcePlaceholder.Visibility = Visibility.Collapsed;
+        }
+        catch
+        {
+            if (version == _sourceVersion) SourcePlaceholder.Text = "最初の画を作れませんでした";
+        }
     }
 
     /// <summary>「2:59」や「179」を秒に直す。全角で入力されても読めるようにする。</summary>
@@ -427,8 +544,7 @@ public partial class MainWindow : Window
         if (!TryParseSeconds(LengthBox.Text, out int target) || target < 1 || target > _platform.MaxSeconds)
             return $"総尺は 0:01〜{Fmt(_platform.MaxSeconds)} の間で入力してください（例: {Fmt(_platform.DefaultSeconds)}）";
         double length = _totalSeconds > 0 ? Math.Min(_totalSeconds, target) : target; // 出来上がりの長さ
-        Ffmpeg.Intro? intro = null;
-        if (IntroCheck.IsChecked == true && _intro.Build(_totalSeconds, target, out intro) is { } introError) return introError;
+        if (Intro.Build(out var intro) is { } introError) return introError;
         double fadeIn = 0, fadeOut = 0;
         if (_bgmFile != null && (!TryParseNumber(FadeInBox.Text, out fadeIn) || !TryParseNumber(FadeOutBox.Text, out fadeOut)
                                  || fadeIn < 0 || fadeOut < 0 || fadeIn + fadeOut > length))
@@ -447,8 +563,8 @@ public partial class MainWindow : Window
     void RefreshInfo()
     {
         if (!_ready) return;
+        Intro.SetTarget(TryParseSeconds(LengthBox.Text, out int target) && target >= 1 && target <= _platform.MaxSeconds ? target : 0);
         UpdateSample();
-        IntroSummary.Text = _intro.Describe();
         string? error = Validate(out var s);
         if (error != null)
         {
@@ -466,8 +582,36 @@ public partial class MainWindow : Window
                             (_bgmFile == null ? "" : VolumeSlider.Value == 0 ? "・BGMあり" : $"・BGMあり（{VolumeText.Text}）") +
                             (TextCheck.IsChecked == true ? "・テキストあり" : "");
         }
+        if (_files.Count == 0) InfoText.Text = "① で動画を入れてください";
+        UpdateSummary(error == null ? s : null);
+        UpdateStepMarks();
         UpdateState();
         UpdatePreviewStale();
+    }
+
+    /// <summary>⑤ の「設定のまとめ」と「保存先」。s は入力チェックを通ったときの設定（通らなければ null）。</summary>
+    void UpdateSummary(Settings? s)
+    {
+        SumVideoText.Text = (_files.Count == 0 ? "まだ入れていません" : $"{_files.Count}本・合計 {Fmt(_totalSeconds)}")
+                            + (BlurRadio.IsChecked == true ? "・横向きは全体を残す（ぼかした背景）" : "・横向きは中央を切り抜く");
+        var intro = Intro.Choice;
+        string length = $"{_platform.Name} {LengthBox.Text}"
+                        + (s != null && _totalSeconds > 0 ? $"（{Ffmpeg.MainFactor(s.Intro, _totalSeconds, s.Target):0.#}倍速）" : "");
+        SumIntroText.Text = length + (!intro.Enabled ? "・冒頭なし"
+            : s?.Intro is { } i ? $"・{Fmt(i.Start)}〜{Fmt(i.End)} を冒頭 {i.Seconds:0.#} 秒に・{(i.Copy ? "コピー" : "移す")}"
+                                  + $"・フェード {intro.FadeIn}／{intro.FadeOut} 秒"
+            : $"・冒頭 {intro.Seconds} 秒（{(intro.Copy ? "コピー" : "移す")}）");
+        SumBgmText.Text = _bgmFile == null ? "なし"
+            : $"♪ {System.IO.Path.GetFileName(_bgmFile)}（{Fmt(_bgmSeconds)}）・{VolumeText.Text}・フェード {FadeInBox.Text}／{FadeOutBox.Text} 秒";
+        string firstLine = CaptionBox.Text.Trim().Split('\n')[0].Trim();
+        SumTextText.Text = TextCheck.IsChecked != true ? "なし"
+            : $"{(firstLine == "" ? "（まだ入れていません）" : firstLine)}・{FontBox.SelectedItem}・{ColorBox.SelectedItem}・{SizeBox.Text}"
+              + $"・{PositionBox.SelectedItem}" + (BackBoxRadio.IsChecked == true ? "・帯あり" : "");
+        string name = _files.Count == 0 ? "（元の動画の名前）" : System.IO.Path.GetFileNameWithoutExtension(_files[0]);
+        string file = $"「{name}_{_platform.Key}.mp4」";
+        SaveText.Text = _settings.UseOutputFolder && _settings.OutputFolder is { } folder
+            ? $"決まったフォルダ（{folder}）に{file}を作ります（「設定」で変えられます）"
+            : $"元の動画と同じフォルダに{file}を作ります（「設定」で、決まったフォルダにもできます）";
     }
 
     // 背景なしの見本で、動画の代わりにする灰色
@@ -631,19 +775,17 @@ public partial class MainWindow : Window
             return;
         }
         var layout = BlurRadio.IsChecked == true ? Ffmpeg.Layout.Blur : Ffmpeg.Layout.Crop;
-        string status = StatusText.Text;
-        StatusText.Text = "プレビューを作成中…";
+        PreviewCaption.Text = "プレビューを作成中…";
         SetBusy(true);
         try
         {
             var frames = await Ffmpeg.RenderPreviewAsync(_files, _totalSeconds, s.Target, s.Intro, layout, caption,
                 CancellationToken.None);
-            StatusText.Text = status;
             SetPreview(frames, s.Intro != null);
         }
         catch (Exception ex)
         {
-            StatusText.Text = status;
+            ShowPreviewFrame();
             MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -663,26 +805,6 @@ public partial class MainWindow : Window
         UpdatePreviewStale();
     }
 
-    const double PreviewMinColumn = 290; // プレビュー欄の最小の幅（MainWindow.xaml の初期値）
-    const double SettingsMinWidth = 890; // 左（動画・設定）に残す最小の幅（最小サイズの窓のときの幅）
-
-    /// <summary>
-    /// プレビューの枠を出来上がりと同じ 9:16 にして、欄の高さいっぱいに大きくする。
-    /// 窓を縦に大きくしたら欄の幅も広げる（左の設定が最小サイズのときより狭くならない範囲で）。
-    /// </summary>
-    void PreviewArea_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        double height = PreviewArea.ActualHeight - PreviewControls.ActualHeight; // 枠に使える高さ
-        if (height <= 0 || Content is not FrameworkElement root) return;
-        double chrome = PreviewColumn.ActualWidth - PreviewArea.ActualWidth;      // 欄の線と余白
-        double maxColumn = Math.Max(PreviewMinColumn, root.ActualWidth - 12 - SettingsMinWidth);
-        double column = Math.Clamp(height * 9 / 16 + chrome, PreviewMinColumn, maxColumn);
-        if (Math.Abs(PreviewColumn.ActualWidth - column) > 1) PreviewColumn.Width = new GridLength(column);
-        double width = Math.Min(column - chrome, height * 9 / 16);
-        PreviewFrame.Width = width;
-        PreviewFrame.Height = width * 16 / 9;
-    }
-
     void PreviewFrame_Checked(object sender, RoutedEventArgs e)
     {
         if (!_ready) return;
@@ -696,6 +818,11 @@ public partial class MainWindow : Window
     /// </summary>
     async void PreviewVideoButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_clipRendering)
+        {
+            _cts?.Cancel(); // 作っている最中は「やめる」
+            return;
+        }
         if (_encoder == null || _files.Count == 0 || Validate(out var s) != null) return;
         Ffmpeg.Caption? caption;
         try
@@ -713,14 +840,18 @@ public partial class MainWindow : Window
         double length = Ffmpeg.OutputSeconds(s.Intro, _totalSeconds, s.Target);
         double clipSeconds = Math.Min(length, s.Intro != null ? s.Intro.Seconds + 2 : 5);
         string file = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"timelapse-preview-{Guid.NewGuid():N}.mp4");
-        string status = StatusText.Text;
-        double bar = Bar.Value;
         _cts = new CancellationTokenSource();
+        _clipRendering = true;
+        PreviewVideoButton.Content = "やめる";
+        PreviewBar.Value = 0;
+        PreviewBar.Visibility = Visibility.Visible;
+        PreviewCaption.Text = "動画のプレビューを作成中…";
         SetBusy(true, cancellable: true);
         var progress = new Progress<Ffmpeg.Progress>(p =>
         {
-            Bar.Value = p.Fraction;
-            StatusText.Text = $"{p.Stage}… {p.Fraction:P0}";
+            if (!_clipRendering) return;
+            PreviewBar.Value = p.Fraction;
+            PreviewCaption.Text = $"{p.Stage}… {p.Fraction:P0}";
         });
         var sw = Stopwatch.StartNew();
         try
@@ -734,16 +865,19 @@ public partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             TryDelete(file);
+            ShowPreviewFrame();
         }
         catch (Exception ex)
         {
             TryDelete(file);
+            ShowPreviewFrame();
             MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
-            StatusText.Text = status;
-            Bar.Value = bar;
+            _clipRendering = false;
+            PreviewVideoButton.Content = "動画で見る";
+            PreviewBar.Visibility = Visibility.Collapsed;
             _cts.Dispose();
             _cts = null;
             SetBusy(false);
@@ -865,8 +999,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>画の見た目に関わる設定をまとめた文字列（BGM と完成品のフェードは静止画に出ないので含めない）。</summary>
-    string PreviewKey() => string.Join("|", string.Join(";", _files), LengthBox.Text, IntroCheck.IsChecked,
-        _intro with { FadeIn = "", FadeOut = "" },
+    string PreviewKey() => string.Join("|", string.Join(";", _files), LengthBox.Text,
+        Intro.Choice with { FadeIn = "", FadeOut = "" },
         BlurRadio.IsChecked, TextCheck.IsChecked, CaptionBox.Text, FontBox.SelectedIndex, ColorBox.SelectedIndex,
         BackBoxRadio.IsChecked, SizeBox.Text, PositionBox.SelectedIndex);
 
@@ -875,7 +1009,7 @@ public partial class MainWindow : Window
     /// BGM のフェードアウトは動画の終わりにかかるので、最初の数秒の動画には出ない（含めない）。
     /// </summary>
     string ClipKey() => string.Join("|", PreviewKey(), _bgmFile, VolumeSlider.Value, FadeInBox.Text,
-        _intro.FadeIn, _intro.FadeOut);
+        Intro.Choice.FadeIn, Intro.Choice.FadeOut);
 
     /// <summary>表示中のプレビュー（画か動画）を作ったあとに設定が変わっていたら、そのことを画の上に出す。</summary>
     void UpdatePreviewStale()
@@ -922,17 +1056,16 @@ public partial class MainWindow : Window
         bool idle = !_busy;
         AddButton.IsEnabled = idle && Ffmpeg.IsAvailable;
         ClearButton.IsEnabled = idle && _files.Count > 0;
-        SettingsPanel.IsEnabled = idle; // 変換中は設定を変えられないようにする
-        // 冒頭を選ぶ画面は、動画と総尺が決まってから開ける（選んだ範囲を何秒にするかは総尺で変わる）
-        IntroButton.IsEnabled = IntroCheck.IsChecked == true && _files.Count > 0 && _totalSeconds > 0
-                                && TryParseSeconds(LengthBox.Text, out int t) && t >= 1 && t <= _platform.MaxSeconds;
+        // 変換中は設定を変えられないようにする（手順の画面の行き来と、プレビュー欄はそのまま）
+        VideoStep.IsEnabled = Intro.IsEnabled = BgmStep.IsEnabled = TextStep.IsEnabled = idle;
         BgmSelectButton.IsEnabled = Ffmpeg.IsAvailable;
         BgmClearButton.IsEnabled = FadeInBox.IsEnabled = FadeOutBox.IsEnabled = VolumeSlider.IsEnabled = _bgmFile != null;
         CaptionBox.IsEnabled = FontBox.IsEnabled = SizeBox.IsEnabled = ColorBox.IsEnabled = PositionBox.IsEnabled
             = BackNoneRadio.IsEnabled = BackBoxRadio.IsEnabled = TextCheck.IsChecked == true;
         bool valid = _files.Count > 0 && _totalSeconds > 0 && Validate(out _) == null;
         PreviewButton.IsEnabled = idle && valid; // プレビューは画像を作るだけなので、エンコーダーは要らない
-        PreviewVideoButton.IsEnabled = idle && _encoder != null && valid; // 動画のプレビューは動画を作るので要る
+        // 動画のプレビューは動画を作るので要る。作っている最中は「やめる」として押せる
+        PreviewVideoButton.IsEnabled = _clipRendering || (idle && _encoder != null && valid);
         StartButton.IsEnabled = idle && _encoder != null && valid;
     }
 

@@ -22,8 +22,8 @@
     <Compile Include="../../src/SettingsWindow.xaml.cs" Link="SettingsWindow.xaml.cs" />
     <Page Include="../../src/SleepWindow.xaml" Link="SleepWindow.xaml" />
     <Compile Include="../../src/SleepWindow.xaml.cs" Link="SleepWindow.xaml.cs" />
-    <Page Include="../../src/IntroWindow.xaml" Link="IntroWindow.xaml" />
-    <Compile Include="../../src/IntroWindow.xaml.cs" Link="IntroWindow.xaml.cs" />
+    <Page Include="../../src/IntroPanel.xaml" Link="IntroPanel.xaml" />
+    <Compile Include="../../src/IntroPanel.xaml.cs" Link="IntroPanel.xaml.cs" />
     <Compile Include="../../src/RangeBar.cs" />
   </ItemGroup>
 

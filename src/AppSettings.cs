@@ -13,10 +13,9 @@ public sealed class AppSettings
     public string? Platform { get; set; }          // 投稿先の Key
     public string? Length { get; set; }            // 総尺（「2:59」など）
     public bool Intro { get; set; } = true;
-    public bool IntroPick { get; set; }               // 冒頭の選びかた: true = 見ながら選ぶ / false = 数値で（最後の N 秒）
     public string IntroSeconds { get; set; } = "5";   // 冒頭の長さ（秒）
     public bool IntroCopy { get; set; }               // true = コピー（本編にも残す）/ false = 移す
-    public string IntroFadeIn { get; set; } = "0.3";  // 冒頭に移した完成品の部分のフェード（秒）
+    public string IntroFadeIn { get; set; } = "0.3";  // 冒頭の部分のフェード（秒）
     public string IntroFadeOut { get; set; } = "0.3";
     public bool Blur { get; set; }                 // 横向きの動画: true = ぼかし背景 / false = 中央を切り抜く
     public string FadeIn { get; set; } = "0.5";       // BGM のフェード（秒）

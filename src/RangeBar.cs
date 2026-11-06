@@ -6,29 +6,36 @@ using System.Windows.Media;
 namespace TimelapseShorts;
 
 /// <summary>
-/// 冒頭を選ぶ画面の横長のバー（秒の目盛りつき）。ViewStart〜ViewEnd 秒を横いっぱいに描き、選んだ範囲・今の位置を重ねる。
-/// CanSelect なら、ドラッグで範囲を選び、両端をつまんで調整できる（ドラッグせずにクリックすると、今の位置が動く）。
-/// CanSelect でなければ、クリック・ドラッグで今の位置だけが動く（「全体」のバー）。
-/// 値は持ち主（IntroWindow）が決めて Redraw で描き直す。ドラッグしたときはイベントで知らせる。
+/// ② 冒頭の横長のバー（秒の目盛りつき）。ViewStart〜ViewEnd 秒を横いっぱいに描き、選んだ範囲・今の位置を重ねる。
+/// CanSelect なら、ドラッグで範囲を選ぶ・範囲の中をつかんで横にずらす・両端をつまんで調整ができる。
+/// ドラッグせずにクリックすると、今の位置が動く。CanSelect でなければ、クリック・ドラッグで今の位置だけが動く。
+/// 範囲の長さは冒頭の秒数と連動していて、持ち主（IntroPanel）が決める。ここでは、どう動かしたかだけを知らせる。
+/// 値は持ち主が決めて Redraw で描き直す。
 /// </summary>
 public sealed class RangeBar : FrameworkElement
 {
     public double ViewStart, ViewEnd = 1;     // 横いっぱいに描く範囲（秒）
-    public double SelStart, SelEnd;           // 選んだ範囲
+    public double SelStart, SelEnd;           // 選んだ範囲（SelEnd が SelStart 以下なら、範囲なし）
     public double Position;                   // 今の位置
     public double FrameStart = -1, FrameEnd = -1; // 「全体」のバーに描く、拡大のバーの範囲（無ければ -1）
-    public bool CanSelect { get; set; }
+    public bool CanSelect { get; set; } = true;
 
+    /// <summary>今の位置を動かした（クリック、または選べないときのドラッグ）。</summary>
     public event Action<double>? PositionDragged;
-    public event Action<double, double>? SelectionDragged;
+    /// <summary>範囲の端を動かした（新しく選ぶときも）。(動かさない端, 動かしている所)。動かしている所が端を越えたら、向きが逆になる。</summary>
+    public event Action<double, double>? RangeEdited;
+    /// <summary>範囲ごと横にずらした。値はずらしたあとの範囲のはじめ。</summary>
+    public event Action<double>? RangeMoved;
     /// <summary>マウスのホイール。(倍率, その位置の秒)。1 より小さければ拡大する。</summary>
     public event Action<double, double>? Zoomed;
 
     const double Track = 26;      // バーの高さ（その下に目盛りの字）
     const double Grip = 7;        // 端をつまめる幅（ピクセル）
-    enum Drag { None, Scrub, Pending, New, Start, End }
+    enum Drag { None, Scrub, Pending, PendingMove, New, Edge, Move }
     Drag _drag;
-    double _anchor;
+    double _anchor;   // 押した所の秒
+    double _fixed;    // 端をつまんだときの、動かさない方の端
+    double _moveFrom; // 範囲ごとずらすときの、ずらす前のはじめ
 
     public RangeBar()
     {
@@ -38,24 +45,36 @@ public sealed class RangeBar : FrameworkElement
 
     public void Redraw() => InvalidateVisual();
 
+    bool HasRange => SelEnd > SelStart;
     double X(double t) => (t - ViewStart) / Math.Max(1e-9, ViewEnd - ViewStart) * ActualWidth;
     double T(double x) => Math.Clamp(ViewStart + x / Math.Max(1, ActualWidth) * (ViewEnd - ViewStart), ViewStart, ViewEnd);
 
-    Drag HitTest(double x)
+    Drag HitTest(double x, out double fixedEnd)
     {
+        fixedEnd = 0;
         if (!CanSelect) return Drag.Scrub;
+        if (!HasRange) return Drag.Pending;
         double s = X(SelStart), e = X(SelEnd);
         // 範囲が狭くて両端が近いときは、近い方をつまむ
-        if (Math.Abs(x - e) <= Grip && Math.Abs(x - e) <= Math.Abs(x - s)) return Drag.End;
-        if (Math.Abs(x - s) <= Grip) return Drag.Start;
-        return Drag.Pending;
+        if (Math.Abs(x - e) <= Grip && Math.Abs(x - e) <= Math.Abs(x - s))
+        {
+            fixedEnd = SelStart;
+            return Drag.Edge;
+        }
+        if (Math.Abs(x - s) <= Grip)
+        {
+            fixedEnd = SelEnd;
+            return Drag.Edge;
+        }
+        return x > s && x < e ? Drag.PendingMove : Drag.Pending;
     }
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         double x = e.GetPosition(this).X;
-        _drag = HitTest(x);
+        _drag = HitTest(x, out _fixed);
         _anchor = T(x);
+        _moveFrom = SelStart;
         CaptureMouse();
         if (_drag == Drag.Scrub) PositionDragged?.Invoke(_anchor);
         e.Handled = true;
@@ -66,37 +85,44 @@ public sealed class RangeBar : FrameworkElement
         double x = e.GetPosition(this).X;
         if (!IsMouseCaptured)
         {
-            Cursor = HitTest(x) is Drag.Start or Drag.End ? Cursors.SizeWE : null;
+            Cursor = HitTest(x, out _) switch
+            {
+                Drag.Edge => Cursors.SizeWE,
+                Drag.PendingMove => Cursors.SizeAll,
+                _ => null,
+            };
             return;
         }
         double t = T(x);
+        bool moved = Math.Abs(x - X(_anchor)) > 4; // 少し動いたらドラッグ（それまではクリック）
         switch (_drag)
         {
             case Drag.Scrub:
                 PositionDragged?.Invoke(t);
                 break;
-            case Drag.Pending when Math.Abs(x - X(_anchor)) > 4:
+            case Drag.Pending when moved:
                 _drag = Drag.New;
-                SelectionDragged?.Invoke(Math.Min(_anchor, t), Math.Max(_anchor, t));
+                RangeEdited?.Invoke(_anchor, t);
                 break;
             case Drag.New:
-                SelectionDragged?.Invoke(Math.Min(_anchor, t), Math.Max(_anchor, t));
+                RangeEdited?.Invoke(_anchor, t);
                 break;
-            case Drag.Start:
-                // 反対の端を越えたら、つまんでいる端を入れ替える
-                if (t > SelEnd) { _drag = Drag.End; SelectionDragged?.Invoke(SelEnd, t); }
-                else SelectionDragged?.Invoke(t, SelEnd);
+            case Drag.Edge:
+                RangeEdited?.Invoke(_fixed, t);
                 break;
-            case Drag.End:
-                if (t < SelStart) { _drag = Drag.Start; SelectionDragged?.Invoke(t, SelStart); }
-                else SelectionDragged?.Invoke(SelStart, t);
+            case Drag.PendingMove when moved:
+                _drag = Drag.Move;
+                RangeMoved?.Invoke(_moveFrom + (t - _anchor));
+                break;
+            case Drag.Move:
+                RangeMoved?.Invoke(_moveFrom + (t - _anchor));
                 break;
         }
     }
 
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
     {
-        if (_drag == Drag.Pending) PositionDragged?.Invoke(_anchor); // ドラッグしなかった＝クリック
+        if (_drag is Drag.Pending or Drag.PendingMove) PositionDragged?.Invoke(_anchor); // ドラッグしなかった＝クリック
         _drag = Drag.None;
         ReleaseMouseCapture();
     }
@@ -131,7 +157,7 @@ public sealed class RangeBar : FrameworkElement
         }
 
         // 選んだ範囲。狭くても見えるよう、最低 3 ピクセルにする
-        if (SelEnd > SelStart)
+        if (HasRange)
         {
             double s = Math.Clamp(X(SelStart), 0, w), e = Math.Clamp(X(SelEnd), 0, w);
             if (e - s < 3) { double c = (s + e) / 2; s = c - 1.5; e = c + 1.5; }

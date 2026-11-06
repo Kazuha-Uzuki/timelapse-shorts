@@ -52,7 +52,7 @@ static class Program
         return _failures == 0 ? 0 : 1;
     }
 
-    /// <summary>画面を実際に作り（表示はしない）、初期状態と入力チェックを確かめる。</summary>
+    /// <summary>画面を実際に作り（表示はしない）、初期状態・手順・② の連動・入力チェックを確かめる。</summary>
     static void CheckWindow()
     {
         MainWindow w;
@@ -65,58 +65,136 @@ static class Program
         void Set(string field, object? value) => typeof(MainWindow).GetField(field, F)!.SetValue(w, value);
         void Refresh() => typeof(MainWindow).GetMethod("RefreshInfo", F)!.Invoke(w, null);
         void Call(string method) => typeof(MainWindow).GetMethod(method, F)!.Invoke(w, null);
+        var intro = w.Intro;
+        void IntroCall(string method, params object?[] args) => typeof(IntroPanel).GetMethod(method, F)!.Invoke(intro, args);
+        void IntroSet(string field, object value) => typeof(IntroPanel).GetField(field, F)!.SetValue(intro, value);
+        string Range() => $"{intro.Choice.Start:0.###}〜{intro.Choice.End:0.###}・{intro.SecondsBox.Text} 秒";
+        var click = new RoutedEventArgs();
 
         Check("フォント一覧（★が先頭）", w.FontBox.Items.Count > 9 && w.FontBox.Items[0]!.ToString()!.StartsWith('★'),
             $"{w.FontBox.Items.Count} 個 / 先頭 {w.FontBox.Items[0]}");
         Check("色と位置の選択肢", w.ColorBox.Items.Count == 4 && w.PositionBox.Items.Count == 3);
         Check("総尺の初期値", w.LengthBox.Text == "2:59", w.LengthBox.Text);
+        Check("最初は ① 動画の画面", w.VideoStep.Visibility == Visibility.Visible && w.Intro.Visibility == Visibility.Collapsed
+            && w.MakeStep.Visibility == Visibility.Collapsed && w.SourcePicture.Visibility == Visibility.Visible
+            && w.PreviewArea.Visibility == Visibility.Collapsed && w.StepVideo.IsChecked == true
+            && w.FilesTotalText.Text == "（まだ入れていません）" && w.InfoText.Text == "① で動画を入れてください", w.InfoText.Text);
+
+        // 冒頭の秒数と範囲の連動（冒頭は本編と同じ速さ）
+        Check("連動の計算: 秒数⇄元の動画の長さ・上限",
+            Math.Abs(IntroPanel.SourceLength(5, 3600, 179, false) - 5 * 3600 / 179.0) < 1e-9
+            && Math.Abs(IntroPanel.SecondsFor(IntroPanel.SourceLength(7.3, 3600, 179, true), 3600, 179, true) - 7.3) < 1e-9
+            && Math.Abs(IntroPanel.SecondsFor(IntroPanel.SourceLength(3, 20, 60, true), 20, 60, true) - 3) < 1e-9
+            && IntroPanel.MaxSeconds(3600, 179, false) == 178 && IntroPanel.MaxSeconds(3600, 179, true) == 89.5
+            && IntroPanel.MaxSeconds(60, 5, false) == 4 && IntroPanel.MaxSeconds(20, 60, false) == 19,
+            $"上限 {IntroPanel.MaxSeconds(3600, 179, false)} / {IntroPanel.MaxSeconds(3600, 179, true)} / {IntroPanel.MaxSeconds(60, 5, false)}");
 
         // 1時間の動画（スマホが2つに分けたもの）を入れた状態にする
-        Get<List<string>>("_files").AddRange([@"C:\動画\作業 2026-11-01 (1).mp4", @"C:\動画\作業 2026-11-01 (2).mp4"]);
-        Set("_totalSeconds", 3600.0);
+        string[] files = [@"C:\動画\作業 2026-11-01 (1).mp4", @"C:\動画\作業 2026-11-01 (2).mp4"];
+        Get<List<string>>("_files").AddRange(files);
+        foreach (var f in files) Get<Dictionary<string, double>>("_durations")[f] = 1800;
         Set("_encoder", "h264_mf");
         Call("RefreshList");
         Check("基本の表示", w.InfoText.Text == "合計 1:00:00 → 2:59（20.1倍速）" && w.StartButton.IsEnabled
-                            && w.PreviewButton.IsEnabled && w.PreviewVideoButton.IsEnabled, w.InfoText.Text);
+                            && w.PreviewButton.IsEnabled && w.PreviewVideoButton.IsEnabled && w.FilesList.Items.Count == 2
+                            && w.FilesTotalText.Text == "2本・合計 1:00:00（名前順につなげて1本にします）",
+            $"{w.InfoText.Text} / {w.FilesTotalText.Text}");
+        Check("済んだ手順に ✓", w.StepVideo.Content as string == "① 動画" && w.StepIntro.Content as string == "② 冒頭 ✓"
+                                && w.StepBgm.Content as string == "③ BGM" && w.StepText.Content as string == "④ テキスト",
+            $"{w.StepVideo.Content} / {w.StepIntro.Content} / {w.StepBgm.Content} / {w.StepText.Content}");
         Set("_encoder", null);
         Refresh();
         Check("エンコーダーが無くてもプレビューはできる（動画のプレビューは動画を作るのでできない）",
             w.PreviewButton.IsEnabled && !w.StartButton.IsEnabled && !w.PreviewVideoButton.IsEnabled);
         Set("_encoder", "h264_mf");
-        var intro = Get<IntroChoice>("_intro");
-        Check("冒頭の初期値（最後の 5 秒を移す・完成品のフェード 0.3 秒・BGM のフェード 0.5 秒）",
-            w.FadeInBox.Text == "0.5" && w.FadeOutBox.Text == "0.5" && intro == new IntroChoice(false, 0, 0, "5", false, "0.3", "0.3")
-            && w.IntroSummary.Text == "最後の 5 秒を移す（フェード 0.3／0.3 秒）" && w.IntroButton.IsEnabled, w.IntroSummary.Text);
-        Set("_intro", intro with { FadeIn = "3", FadeOut = "2.5" }); // 合計 5.5 秒は、冒頭の 5 秒より長い
         Refresh();
+
+        // ② 冒頭: 最初は「最後の 5 秒を移す」。60 分を 2:59 に → 20.1 倍速なので、元の動画の最後の 1分41秒
+        double speed = 3600 / 179.0;
+        var c = intro.Choice;
+        Check("冒頭の初期値（最後の 5 秒を移す・フェード 0.3 秒・BGM のフェード 0.5 秒）",
+            c is { Enabled: true, Seconds: "5", Copy: false, FadeIn: "0.3", FadeOut: "0.3", End: 3600 }
+            && Math.Abs(c.Start - (3600 - 5 * speed)) < 1e-6 && w.FadeInBox.Text == "0.5" && w.FadeOutBox.Text == "0.5"
+            && intro.OverallBar.SelStart == c.Start && intro.OverallBar.SelEnd == 3600
+            && intro.RangeText.Text == "選んだ所 58:19〜1:00:00（1分41秒・20.1 倍速）"
+            && intro.OrderIntroText.Text == "冒頭 5秒" && intro.OrderMainText.Text == "本編 2:54（選んだ所は入らない・20.1倍速）",
+            $"{Range()} / {intro.RangeText.Text} / {intro.OrderIntroText.Text} / {intro.OrderMainText.Text}");
+        intro.SecondsBox.Text = "10";
+        Check("秒数を変えるとバーが変わる（終わりはそのまま）", Math.Abs(intro.Choice.Start - (3600 - 10 * speed)) < 1e-6
+            && intro.Choice.End == 3600 && intro.OverallBar.SelStart == intro.Choice.Start, Range());
+        intro.EditRange(1000, 1000 + 7 * speed + 0.04); // はじめを 1000 秒にして、7 秒ぶんより少しだけ長く
+        Check("バーで範囲を変えると秒数が変わる（0.1 秒刻み）", intro.SecondsBox.Text == "7" && intro.Choice.Start == 1000
+            && Math.Abs(intro.Choice.End - (1000 + 7 * speed)) < 1e-6, Range());
+        intro.EditRange(2000, 1800); // 終わりを 2000 秒にして、はじめを前へ（200 秒 → 9.9 秒）
+        Check("逆向きにドラッグ（終わりはそのまま）", intro.SecondsBox.Text == "9.9" && intro.Choice.End == 2000
+            && Math.Abs(intro.Choice.Start - (2000 - 9.9 * speed)) < 1e-6, Range());
+        intro.MoveRange(500);
+        Check("範囲ごとずらす（長さはそのまま）", intro.SecondsBox.Text == "9.9" && intro.Choice.Start == 500
+            && Math.Abs(intro.Choice.End - (500 + 9.9 * speed)) < 1e-6, Range());
+        intro.MoveRange(3590);
+        Check("ずらしても元の動画からはみ出さない", intro.Choice.End == 3600 && intro.SecondsBox.Text == "9.9", Range());
+        IntroSet("_pos", 3000.0);
+        IntroCall("FromButton_Click", intro.FromButton, click);
+        double start = 3600 - 29.8 * speed;
+        Check("「ここから」: 終わりはそのままで、はじめを今の位置に", intro.Choice.End == 3600 && intro.SecondsBox.Text == "29.8"
+            && Math.Abs(intro.Choice.Start - start) < 1e-6, Range());
+        IntroSet("_pos", 3300.0);
+        IntroCall("ToButton_Click", intro.ToButton, click);
+        Check("「ここまで」: はじめはそのままで、終わりを今の位置に", intro.SecondsBox.Text == "14.9"
+            && Math.Abs(intro.Choice.Start - start) < 1e-6 && Math.Abs(intro.Choice.End - (start + 14.9 * speed)) < 1e-6, Range());
+        IntroCall("LastButton_Click", intro.LastButton, click);
+        Check("「最後に合わせる」", intro.Choice.End == 3600 && intro.SecondsBox.Text == "14.9"
+            && Math.Abs(intro.Choice.Start - (3600 - 14.9 * speed)) < 1e-6, Range());
+        intro.SecondsBox.Text = "5";
+        intro.CopyRadio.IsChecked = true; // コピー: 本編は 60 分全部を 2:54 に（20.7 倍速）。冒頭も同じ速さ
+        Check("コピーにすると、秒数はそのままで範囲の長さが変わる", intro.SecondsBox.Text == "5" && intro.Choice.End == 3600
+            && Math.Abs(intro.Choice.Start - (3600 - 5 * 3600 / 174.0)) < 1e-6
+            && intro.OrderMainText.Text == "本編 2:54（選んだ所も入る・20.7倍速）", $"{Range()} / {intro.OrderMainText.Text}");
+        intro.MoveRadio.IsChecked = true;
+        ((RadioButton)w.PlatformPanel.Children[2]).IsChecked = true; // TikTok（最大 10:00）
+        w.LengthBox.Text = "9:59"; // 6 倍速
+        Check("総尺を変えると、秒数はそのままで範囲の長さが変わる", intro.SecondsBox.Text == "5" && intro.Choice.End == 3600
+            && Math.Abs(intro.Choice.Start - (3600 - 5 * 3600 / 599.0)) < 1e-6, Range());
+        ((RadioButton)w.PlatformPanel.Children[0]).IsChecked = true; // YouTube ショート（2:59 に戻る）
+        Check("投稿先のボタンは横に 4 つ", w.PlatformPanel.Columns == 4 && w.PlatformPanel.Children.Count == 4 && w.LengthBox.Text == "2:59");
+
+        intro.SecondsBox.Text = "0";
+        Check("冒頭の長さが 0 秒なら作れない", w.InfoText.Text == "冒頭の長さは 1 秒以上にしてください" && !w.StartButton.IsEnabled,
+            w.InfoText.Text);
+        intro.SecondsBox.Text = "500";
+        Check("冒頭の長さの上限（移すなら総尺 − 1 秒）", w.InfoText.Text == "冒頭の長さは 1〜178 秒にしてください（移すとき）"
+                                                    && !w.StartButton.IsEnabled, w.InfoText.Text);
+        intro.SecondsBox.Text = "5";
+        intro.FadeInBox.Text = "3";
+        intro.FadeOutBox.Text = "2.5"; // 合計 5.5 秒は、冒頭の 5 秒より長い
         Check("完成品のフェードが長すぎると作れない", w.InfoText.Text.StartsWith("完成品のフェード") && !w.StartButton.IsEnabled,
             w.InfoText.Text);
-        w.IntroCheck.IsChecked = false;
-        Check("冒頭に持ってこないなら、冒頭の設定は見ない・選べない", w.StartButton.IsEnabled && !w.IntroButton.IsEnabled, w.InfoText.Text);
-        w.IntroCheck.IsChecked = true;
-        Set("_intro", intro with { FadeOut = "０．３" }); // 全角でも読める
-        Refresh();
+        intro.IntroCheck.IsChecked = false;
+        Check("冒頭に持ってこないなら、冒頭の設定は触れない", w.StartButton.IsEnabled && !intro.SecondsBox.IsEnabled
+            && !intro.LastButton.IsEnabled && w.InfoText.Text == "合計 1:00:00 → 2:59（20.1倍速）"
+            && w.SumIntroText.Text.EndsWith("・冒頭なし") && intro.OrderMainText.Text == "本編 2:59（20.1倍速）",
+            $"{w.InfoText.Text} / {w.SumIntroText.Text} / {intro.OrderMainText.Text}");
+        intro.IntroCheck.IsChecked = true;
+        intro.FadeInBox.Text = "0.3";
+        intro.FadeOutBox.Text = "０．３"; // 全角でも読める
         Check("完成品のフェード（全角）", w.StartButton.IsEnabled, w.InfoText.Text);
-        Set("_intro", intro with { Pick = true });
-        Refresh();
-        Check("見ながら選ぶで、まだ選んでいなければ作れない", w.InfoText.Text.Contains("「冒頭を選ぶ…」") && !w.StartButton.IsEnabled
-                                                       && w.IntroSummary.Text.Contains("まだ選んでいません"), w.InfoText.Text);
-        Set("_intro", intro with { Pick = true, Start = 3000, End = 3125 });
-        Refresh();
-        Check("見ながら選んだ範囲（2分05秒を 5 秒に）", w.StartButton.IsEnabled
-            && w.IntroSummary.Text == "50:00〜52:05 を 5 秒にして移す（フェード 0.3／0.3 秒）"
-            && w.InfoText.Text.StartsWith("合計 1:00:00 → 2:59（20倍速）"), // 本編は 3475 秒を 174 秒に
-            $"{w.IntroSummary.Text} / {w.InfoText.Text}");
+        intro.FadeOutBox.Text = "0.3";
+        intro.MoveRange(1000);
         Call("RefreshList");
-        Check("動画を入れ替えたら、見ながら選んだ範囲は選び直す", !Get<IntroChoice>("_intro").HasRange && !w.StartButton.IsEnabled);
-        Set("_intro", intro);
-        Refresh();
+        Check("動画を入れ替えたら、範囲は「最後の ○ 秒」から選び直す", intro.Choice.End == 3600 && intro.SecondsBox.Text == "5", Range());
+        Check("⑤ のまとめ（① 動画・② 冒頭・保存先）",
+            w.SumVideoText.Text == "2本・合計 1:00:00・横向きは中央を切り抜く"
+            && w.SumIntroText.Text == "YouTube ショート 2:59（20.1倍速）・58:19〜1:00:00 を冒頭 5 秒に・移す・フェード 0.3／0.3 秒"
+            && w.SaveText.Text == "元の動画と同じフォルダに「作業 2026-11-01 (1)_youtube.mp4」を作ります（「設定」で、決まったフォルダにもできます）",
+            $"{w.SumVideoText.Text} / {w.SumIntroText.Text} / {w.SaveText.Text}");
 
         w.TextCheck.IsChecked = true;
         Check("テキストが空なら作れない", w.InfoText.Text == "入れるテキストを入力してください" && !w.StartButton.IsEnabled
                                       && !w.PreviewButton.IsEnabled, w.InfoText.Text);
         w.CaptionBox.Text = "完成まで3時間";
-        Check("テキストあり", w.InfoText.Text.EndsWith("・テキストあり") && w.SampleText.Text == "完成まで3時間", w.InfoText.Text);
+        Check("テキストあり", w.InfoText.Text.EndsWith("・テキストあり") && w.SampleText.Text == "完成まで3時間"
+                              && w.SumTextText.Text.StartsWith("完成まで3時間・★") && w.StepText.Content as string == "④ テキスト ✓",
+            $"{w.InfoText.Text} / {w.SumTextText.Text}");
         w.SizeBox.Text = "10";
         Check("文字の大きさの範囲", w.InfoText.Text.StartsWith("文字の大きさ") && !w.StartButton.IsEnabled, w.InfoText.Text);
         w.SizeBox.Text = "８０"; // 全角でも読める
@@ -126,7 +204,8 @@ static class Program
         Set("_bgmSeconds", 120.0);
         Call("ShowBgm");
         Refresh();
-        Check("BGMあり", w.InfoText.Text.Contains("・BGMあり") && w.FadeInBox.IsEnabled, w.InfoText.Text);
+        Check("BGMあり", w.InfoText.Text.Contains("・BGMあり") && w.FadeInBox.IsEnabled && w.StepBgm.Content as string == "③ BGM ✓"
+                         && w.SumBgmText.Text == "♪ 曲.mp3（2:00）・±0 dB・フェード 0.5／0.5 秒", $"{w.InfoText.Text} / {w.SumBgmText.Text}");
         w.FadeInBox.Text = "100";
         w.FadeOutBox.Text = "100";
         Check("フェードが長すぎると作れない", w.InfoText.Text.StartsWith("フェードの秒数") && !w.StartButton.IsEnabled, w.InfoText.Text);
@@ -145,6 +224,17 @@ static class Program
         w.VolumeSlider.Value = -6;
         Check("音量バー（-6 dB）", w.PeakBar.Value == -9 && w.PeakText.Text == "-9.0 dB" && !w.LevelNote.Text.Contains("超えています"),
             $"{w.VolumeText.Text} / 最大 {w.PeakText.Text} / {w.LevelNote.Text}");
+
+        // 手順の切り替え: 左の画は ① が元の動画、③④⑤ がプレビュー。② は左右いっぱい
+        w.ShowStep(2);
+        bool bgm = w.BgmStep.Visibility == Visibility.Visible && w.PreviewArea.Visibility == Visibility.Visible
+                   && w.SourcePicture.Visibility == Visibility.Collapsed && w.VideoStep.Visibility == Visibility.Collapsed
+                   && w.StepBgm.IsChecked == true && w.StepBgm.Content as string == "③ BGM";
+        w.ShowStep(1);
+        bool introShown = w.Intro.Visibility == Visibility.Visible && w.PreviewArea.Visibility == Visibility.Collapsed
+                          && w.SourcePicture.Visibility == Visibility.Collapsed && w.StepBgm.Content as string == "③ BGM ✓";
+        w.ShowStep(0);
+        Check("手順の切り替え", bgm && introShown && w.VideoStep.Visibility == Visibility.Visible && w.StepVideo.IsChecked == true);
     }
 
     static async Task RunAsync()
@@ -517,8 +607,8 @@ static class Program
     }
 
     /// <summary>
-    /// 画面を実際に表示して、プレビュー欄（画・切り替え・設定が変わったときの表示）と、
-    /// 標準・最小の大きさでの配置（切れている所がないか）を確かめる。
+    /// 画面を実際に表示して、プレビュー欄（画・切り替え・設定が変わったときの表示）、② の元の動画、
+    /// 手順ごと・大きさごとの配置（切れている所がないか）、設定画面とダーク、設定の復元を確かめる。
     /// </summary>
     static void CheckShownWindow()
     {
@@ -532,6 +622,7 @@ static class Program
         {
             w.Show();
             AllowLargeWindow(w);
+            w.ShowStep(4); // プレビュー欄は ③④⑤ の左
             var setPreview = typeof(MainWindow).GetMethod("SetPreview", F)!;
             Check("プレビュー欄: 最初は案内だけ", w.PreviewImage.Source == null && w.PreviewPlaceholder.IsVisible);
             setPreview.Invoke(w, [_previewFrames, true]);
@@ -556,13 +647,17 @@ static class Program
             Check("プレビュー欄: BGM の音量では古くならない", !w.PreviewStale.IsVisible);
             w.VolumeSlider.Value = -6;
             CheckVideoPreview(w);
+            CheckIntroMedia(w);
 
             SettingsWindow.ApplyTheme("Light"); // CI の Windows の色に左右されないよう、まずライトで確かめる
             Check("ライト: 背景が明るい", Luminance(w.Background) > 0.8, $"{w.Background}");
-            CheckLayout(w, 1480, 720, "標準"); // MainWindow.xaml の Width / Height
-            CheckLayout(w, 1240, 650, "最小"); // MainWindow.xaml の MinWidth / MinHeight
-            CheckLayout(w, 1920, 1030, "最大化"); // フルHDの画面いっぱい（プレビューが大きくなる）
-            CheckIntroWindow(w, true, "ライト");
+            for (int step = 0; step < 5; step++)
+            {
+                w.ShowStep(step);
+                CheckLayout(w, 1480, 720, "ライト標準", shot: true);  // MainWindow.xaml の Width / Height
+                CheckLayout(w, 1240, 650, "ライト最小", shot: false); // MainWindow.xaml の MinWidth / MinHeight
+                CheckLayout(w, 1920, 1030, "ライト最大化", shot: false); // フルHDの画面いっぱい（左の画が大きくなる）
+            }
 
             // 設定画面からダークにする（実際の操作と同じ道すじで、設定にも「Dark」が入る）
             var appSettings = (AppSettings)typeof(MainWindow).GetField("_settings", F)!.GetValue(w)!;
@@ -591,27 +686,37 @@ static class Program
             Check("ダーク: 背景が暗く、文字が明るい", Luminance(w.Background) < 0.2 && Luminance(w.Foreground) > 0.8
                                                 && Luminance(w.LengthHint.Foreground) > 0.5,
                 $"背景 {w.Background} / 文字 {w.Foreground} / 補足 {w.LengthHint.Foreground}");
-            Check("ダーク: ボタンや入力欄も暗い", Luminance(w.LengthBox.Background) < 0.3 && Luminance(w.StartButton.Background) < 0.3,
-                $"入力欄 {w.LengthBox.Background} / ボタン {w.StartButton.Background}");
+            Check("ダーク: ボタンや入力欄も暗い", Luminance(w.LengthBox.Background) < 0.3 && Luminance(w.AddButton.Background) < 0.3,
+                $"入力欄 {w.LengthBox.Background} / ボタン {w.AddButton.Background}");
             var settingsClient = (FrameworkElement)VisualTreeHelper.GetChild(settings, 0);
             Shot("settings-dark", settingsClient, settingsClient.RenderSize);
             settings.Close();
-            CheckLayout(w, 1480, 720, "ダーク標準");
-            CheckLayout(w, 1240, 650, "ダーク最小");
-            CheckIntroWindow(w, false, "ダーク");
-            // 作成が終わったあと（「出力フォルダを開く」が出て、下の段が狭くなる）でも収まるか
+            typeof(MainWindow).GetMethod("RefreshInfo", F)!.Invoke(w, null); // 本物では「設定」を閉じたあとに呼ばれる
+            Check("⑤ の保存先: 決まったフォルダ", w.SaveText.Text.StartsWith($"決まったフォルダ（{OutputFolder}）に"), w.SaveText.Text);
+            for (int step = 0; step < 5; step++)
+            {
+                w.ShowStep(step);
+                CheckLayout(w, 1480, 720, "ダーク標準", shot: false);
+                CheckLayout(w, 1240, 650, "ダーク最小", shot: true);
+            }
+            // 作成が終わったあと（「保存先のフォルダを開く」が出て、⑤ の作成の欄が長くなる）でも収まるか
+            w.ShowStep(4);
             string status = w.StatusText.Text;
             w.OpenFolderButton.Visibility = Visibility.Visible;
             w.StatusText.Text = "完成しました（1:02:03）: 作業 2026-11-01 (1)_youtube.mp4";
-            CheckLayout(w, 1240, 650, "ダーク最小・作成後");
+            CheckLayout(w, 1240, 650, "ダーク最小・作成後", shot: true);
             w.OpenFolderButton.Visibility = Visibility.Collapsed;
             w.StatusText.Text = status;
             CheckSleepWindow(w);
 
             // 次の起動で戻るか確かめるため、最初とは違う値にしておく
+            w.ShowStep(1);
             ((RadioButton)w.PlatformPanel.Children[2]).IsChecked = true; // TikTok
             w.LengthBox.Text = "4:30";
-            typeof(MainWindow).GetField("_intro", F)!.SetValue(w, new IntroChoice(true, 10, 20, "7", true, "0.5", "0.3"));
+            w.Intro.IntroCheck.IsChecked = true;
+            w.Intro.SecondsBox.Text = "7";
+            w.Intro.CopyRadio.IsChecked = true;
+            w.Intro.FadeInBox.Text = "0.5";
             w.BlurRadio.IsChecked = true;
             w.FadeInBox.Text = "2";
             w.VolumeSlider.Value = -4;
@@ -621,10 +726,12 @@ static class Program
             w.BackBoxRadio.IsChecked = true;
             w.SizeBox.Text = "100";
 
+            w.ShowStep(4);
             typeof(MainWindow).GetMethod("ClearButton_Click", F)!.Invoke(w, [w.ClearButton, new RoutedEventArgs()]);
             Check("動画をクリアするとプレビューも消える", w.PreviewImage.Source == null && w.PreviewPlaceholder.IsVisible
                                                     && !w.PreviewStale.IsVisible
-                                                    && typeof(MainWindow).GetField("_clipFile", F)!.GetValue(w) == null);
+                                                    && typeof(MainWindow).GetField("_clipFile", F)!.GetValue(w) == null
+                                                    && !w.Intro.Choice.HasRange && w.InfoText.Text == "① で動画を入れてください");
             string font = w.FontBox.SelectedItem!.ToString()!;
             w.Close(); // 閉じるときに設定を書く
             CheckRestore(font);
@@ -660,13 +767,20 @@ static class Program
         Console.WriteLine($"参考  GitHub の PC での再生: {WaitMedia(w.PreviewVideo)}");
         Pump(TimeSpan.FromSeconds(1.5)); // 少し再生させてから写す
         var client = (FrameworkElement)VisualTreeHelper.GetChild(w, 0);
-        Shot("main-video", client, client.RenderSize);
+        Shot("step4-動画", client, client.RenderSize);
 
         Check("動画のプレビュー: 作ったあと設定を変えなければ最新", !w.PreviewStale.IsVisible);
         w.VolumeSlider.Value = -3;
         Check("動画のプレビュー: BGM の音量を変えると古いと出る（静止画とちがって）",
             w.PreviewStale.IsVisible && w.PreviewStaleText.Text.Contains("「動画で見る」"), w.PreviewStaleText.Text);
         w.VolumeSlider.Value = -6;
+        w.ShowStep(1);
+        // 止めたか、もう最後まで見終わっていたか、ここでは開けなかった（どれも音は鳴っていない）
+        bool stopped = (bool)typeof(MainWindow).GetField("_clipPaused", F)!.GetValue(w)!
+                       || (bool)typeof(MainWindow).GetField("_clipEnded", F)!.GetValue(w)!
+                       || w.PreviewVideo.Visibility != Visibility.Visible;
+        w.ShowStep(4);
+        Check("動画のプレビュー: ② に行くと止まる（音だけ鳴り続けない）", stopped);
         w.PreviewFirstRadio.IsChecked = true;
         Check("動画のプレビュー: 「最初」に戻すと静止画（動画は止める）",
             w.PreviewImage.IsVisible && !w.PreviewVideo.IsVisible && w.PreviewCaption.Text.StartsWith("最初")
@@ -674,127 +788,78 @@ static class Program
     }
 
     /// <summary>
-    /// 冒頭を選ぶ画面。明るさが時刻で決まる動画（30 秒）と 30 秒の動画の 2 本をつないだもの（60 秒）を、5 秒にする設定で開く。
-    /// full なら、選びかた・ここから／ここまで・移す／コピー・入力チェック・画が出るかも確かめる。どちらも配置と見た目を確かめる。
+    /// ② 冒頭に、本物の動画（明るさが時刻で決まる 30 秒＋30 秒の 2 本）を入れる。総尺 5 秒なら 12 倍速で、
+    /// 冒頭 1 秒は元の動画の最後の 12 秒。元の動画が出るか（ここで再生できる、またはバーの位置の画）、
+    /// 画は正しい時刻か（20 秒目なら明るさ 16 + 20×7）を確かめる。
     /// </summary>
-    static void CheckIntroWindow(MainWindow owner, bool full, string label)
+    static void CheckIntroMedia(MainWindow w)
     {
         if (_ramp == null || _video2 == null)
         {
-            Check($"冒頭を選ぶ画面（{label}）", false, "前のテストが通っていないので確かめられない");
+            Check("② 冒頭の元の動画", false, "前のテストが通っていないので確かめられない");
             return;
         }
-        IntroWindow? iw = null;
-        try
+        var files = (List<string>)typeof(MainWindow).GetField("_files", F)!.GetValue(w)!;
+        var durations = (Dictionary<string, double>)typeof(MainWindow).GetField("_durations", F)!.GetValue(w)!;
+        files.Clear();
+        files.AddRange([_ramp, _video2]);
+        durations[_ramp] = 30;
+        durations[_video2] = 30;
+        typeof(MainWindow).GetMethod("RefreshList", F)!.Invoke(w, null);
+        w.Width = 1480;
+        w.Height = 720;
+        w.ShowStep(1);
+        w.LengthBox.Text = "5";
+        var intro = w.Intro;
+        intro.SecondsBox.Text = "1";
+        w.UpdateLayout();
+        Check("② 冒頭: 60 秒を 5 秒に（12 倍速）。冒頭 1 秒は最後の 12 秒",
+            intro.Choice is { Start: 48, End: 60 } && intro.RangeText.Text == "選んだ所 0:48〜1:00（12秒・12 倍速）"
+            && intro.OverallBar.SelStart == 48 && intro.ZoomBar.SelEnd == 60,
+            $"{intro.Choice.Start}〜{intro.Choice.End} / {intro.RangeText.Text}");
+
+        bool Wait(Func<bool> done, double seconds)
         {
-            iw = new IntroWindow([_ramp, _video2], [30, 30], 5, new IntroChoice(false, 0, 0, "1", false, "0.3", "0.3")) { Owner = owner };
-            iw.Show();
-            AllowLargeWindow(iw);
-            var win = iw;
-            T Get<T>(string field) => (T)typeof(IntroWindow).GetField(field, F)!.GetValue(win)!;
-            void Set(string field, object value) => typeof(IntroWindow).GetField(field, F)!.SetValue(win, value);
-            void Call(string method, params object?[] args) =>
-                typeof(IntroWindow).GetMethod(method, F)!.Invoke(win, args.Length == 0 ? null : args);
-            IntroChoice Current() => (IntroChoice)typeof(IntroWindow).GetMethod("Current", F)!.Invoke(win, null)!;
-
-            if (full)
-            {
-                // 数値で（最後の 1 秒）: 60 秒を 5 秒に → 12 倍速。最後の 12 秒（48〜60 秒）
-                Check("冒頭を選ぶ画面: 数値でなら、最後の 1 秒の範囲（48〜60 秒）",
-                    iw.LastRadio.IsChecked == true && iw.OverallBar.SelStart == 48 && iw.OverallBar.SelEnd == 60
-                    && !iw.ZoomBar.CanSelect && !iw.FromButton.IsEnabled && iw.OkButton.IsEnabled
-                    && iw.SpeedText.Text.Contains("12 倍速") && iw.OrderMainText.Text == "本編 0:04（選んだ所は入らない・12倍速）",
-                    $"{iw.OverallBar.SelStart}〜{iw.OverallBar.SelEnd} / {iw.SpeedText.Text} / {iw.OrderMainText.Text}");
-                iw.SecondsBox.Text = "2";
-                Check("冒頭を選ぶ画面: 「冒頭の長さ」と「最後の N 秒」は同じ数", iw.LastBox.Text == "2" && iw.OverallBar.SelStart == 36,
-                    $"{iw.LastBox.Text} / {iw.OverallBar.SelStart}");
-                iw.SecondsBox.Text = "1";
-
-                iw.PickRadio.IsChecked = true;
-                Check("冒頭を選ぶ画面: 見ながら選ぶ（最初は数値でと同じ範囲）", iw.ZoomBar.CanSelect && iw.FromButton.IsEnabled
-                    && Current() is { Pick: true, Start: 48, End: 60 } && iw.OkButton.IsEnabled);
-                Set("_pos", 10.0);
-                Call("FromButton_Click", iw.FromButton, new RoutedEventArgs());
-                Set("_pos", 16.0);
-                Call("ToButton_Click", iw.ToButton, new RoutedEventArgs());
-                // 10〜16 秒を 1 秒に（6 倍速）。本編は 54 秒を 4 秒に（13.5 倍速）
-                Check("冒頭を選ぶ画面: 「ここから」「ここまで」で 10〜16 秒",
-                    Current() is { Start: 10, End: 16 } && iw.SpeedText.Text == "選んだ 6秒 を 1 秒にして入れます（6 倍速）"
-                    && iw.OrderMainText.Text == "本編 0:04（選んだ所は入らない・13.5倍速）" && iw.HintText.Text.Contains("0:10〜0:16"),
-                    $"{iw.SpeedText.Text} / {iw.OrderMainText.Text} / {iw.HintText.Text}");
-                iw.CopyRadio.IsChecked = true;
-                Check("冒頭を選ぶ画面: コピーなら本編は全部（15 倍速）", iw.OrderMainText.Text == "本編 0:04（選んだ所も入る・15倍速）",
-                    iw.OrderMainText.Text);
-                iw.SecondsBox.Text = "0";
-                Check("冒頭を選ぶ画面: 長さが 0 秒なら OK できない", !iw.OkButton.IsEnabled && iw.ErrorText.Text.StartsWith("冒頭の長さ"),
-                    iw.ErrorText.Text);
-                iw.SecondsBox.Text = "1";
-                iw.FadeInBox.Text = "1";
-                Check("冒頭を選ぶ画面: フェードが長すぎると OK できない", !iw.OkButton.IsEnabled && iw.ErrorText.Text.StartsWith("完成品のフェード"),
-                    iw.ErrorText.Text);
-                iw.FadeInBox.Text = "0.3";
-                Check("冒頭を選ぶ画面: 選んだ内容", Current() == new IntroChoice(true, 10, 16, "1", true, "0.3", "0.3") && iw.OkButton.IsEnabled,
-                    $"{Current()}");
-
-                // 選んだ内容をメイン画面に戻したときのまとめ（メイン画面の動画は 1 時間の仮のもの）
-                typeof(MainWindow).GetField("_intro", F)!.SetValue(owner, Current());
-                typeof(MainWindow).GetMethod("RefreshInfo", F)!.Invoke(owner, null);
-                Check("メイン画面: 選んだ冒頭のまとめ", owner.IntroSummary.Text == "0:10〜0:16 を 1 秒にしてコピー（フェード 0.3／0.3 秒）",
-                    owner.IntroSummary.Text);
-                typeof(MainWindow).GetField("_intro", F)!.SetValue(owner, new IntroChoice(false, 0, 0, "5", false, "0.3", "0.3"));
-                typeof(MainWindow).GetMethod("RefreshInfo", F)!.Invoke(owner, null);
-
-                // 元の動画が出る（ここで再生できるか、できなければ FFmpeg で描いた画）
-                var frame = new DispatcherFrame();
-                var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-                var watch = Stopwatch.StartNew();
-                timer.Tick += (_, _) => { if (win.ShowsVideo || watch.Elapsed.TotalSeconds > 15) frame.Continue = false; };
-                timer.Start();
-                Dispatcher.PushFrame(frame);
-                timer.Stop();
-                Check("冒頭を選ぶ画面: 元の動画が出る", iw.ShowsVideo, $"{watch.Elapsed.TotalSeconds:0.0}秒");
-                Console.WriteLine($"参考  冒頭を選ぶ画面の再生: {(Get<bool?>("_canPlay") == true ? "ここで再生できた" : "画で表示")}" +
-                                  $"（{iw.VideoNote.Text}）");
-                Pump(TimeSpan.FromSeconds(1));
-            }
-
-            CheckIntroLayout(iw, 1240, 720, $"{label} 標準");
-            CheckIntroLayout(iw, 1000, 660, $"{label} 最小"); // IntroWindow.xaml の MinWidth / MinHeight
+            var frame = new DispatcherFrame();
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+            var watch = Stopwatch.StartNew();
+            timer.Tick += (_, _) => { if (done() || watch.Elapsed.TotalSeconds > seconds) frame.Continue = false; };
+            timer.Start();
+            Dispatcher.PushFrame(frame);
+            timer.Stop();
+            return done();
         }
-        catch (Exception ex)
-        {
-            Check($"冒頭を選ぶ画面（{label}）", false, ex.ToString());
-        }
-        finally
-        {
-            iw?.Close();
-        }
+        var sw = Stopwatch.StartNew();
+        Check("② 冒頭: 元の動画が出る", Wait(() => intro.ShowsVideo, 15), $"{sw.Elapsed.TotalSeconds:0.0}秒");
+        Console.WriteLine($"参考  ② 冒頭の再生: {((bool?)typeof(IntroPanel).GetField("_canPlay", F)!.GetValue(intro) == true ? "ここで再生できた" : "画で表示")}"
+                          + $"（{intro.VideoNote.Text}）");
+
+        // 再生できない PC と同じ道（バーの位置の画を FFmpeg で描く）も確かめる。スクリーンショットにも画が写る。
+        // 画を描いている途中に頼んだ位置は、描き終わってから描くので、頼んだ位置を描き終わる（手が空く）まで待つ
+        bool Idle() => !(bool)typeof(IntroPanel).GetField("_rendering", F)!.GetValue(intro)!
+                       && typeof(IntroPanel).GetField("_wantFrame", F)!.GetValue(intro) == null;
+        typeof(IntroPanel).GetMethod("UseFrames", F)!.Invoke(intro, ["（テスト）バーの位置の画を出しています"]);
+        typeof(IntroPanel).GetMethod("SeekTo", F)!.Invoke(intro, [20.0]);
+        intro.FrameImage.Source = null;
+        bool drawn = Wait(() => Idle() && intro.FrameImage.Source != null, 15);
+        double luma = drawn ? Luma((BitmapSource)intro.FrameImage.Source!) : double.NaN;
+        Check("② 冒頭: バーの位置（20 秒目）の画を描ける", drawn && Math.Abs((luma - 16) / 7 - 20) < 1.5,
+            $"{(luma - 16) / 7:0.0} 秒の明るさ");
+        typeof(IntroPanel).GetMethod("SeekTo", F)!.Invoke(intro, [59.0]); // 写すときは、色のある 2 本目の終わりあたり
+        intro.FrameImage.Source = null;
+        Wait(() => Idle() && intro.FrameImage.Source != null, 15);
     }
 
-    /// <summary>冒頭を選ぶ画面を width×height にして、切れている部品がないか・動画の枠が 9:16 か・ボタンが窓に収まるか。</summary>
-    static void CheckIntroLayout(IntroWindow w, double width, double height, string label)
+    /// <summary>画の明るさ（Y。黒 16〜白 235 に合わせた平均）。</summary>
+    static double Luma(BitmapSource image)
     {
-        w.Width = width;
-        w.Height = height;
-        w.UpdateLayout();
-        bool sized = Math.Abs(w.ActualWidth - width) < 1 && Math.Abs(w.ActualHeight - height) < 1;
-        var root = (FrameworkElement)w.Content;
-        var clipped = Descendants(root).Prepend(root)
-            .Where(e => e.IsVisible && LayoutInformation.GetLayoutClip(e) != null && e is not MediaElement)
-            .Select(e => !string.IsNullOrEmpty(e.Name) ? e.Name : e is TextBlock t ? $"「{t.Text}」" : e.GetType().Name)
-            .ToList();
-        bool Inside(FrameworkElement e)
-        {
-            var corner = e.TranslatePoint(new Point(e.ActualWidth, e.ActualHeight), root);
-            return corner.X <= root.ActualWidth + 0.5 && corner.Y <= root.ActualHeight + 0.5;
-        }
-        double ratio = w.VideoFrame.ActualWidth / w.VideoFrame.ActualHeight;
-        Check($"冒頭を選ぶ画面の配置（{label} {width}×{height}）: 切れている所がない・動画の枠が 9:16",
-            sized && clipped.Count == 0 && Inside(w.CancelButton) && Inside(w.ZoomBar) && Math.Abs(ratio - 9.0 / 16) < 0.01,
-            (sized ? "" : $"窓が {w.ActualWidth}×{w.ActualHeight} にしかならない / ") + string.Join(" / ", clipped)
-            + $" / 枠 {w.VideoFrame.ActualWidth:0}×{w.VideoFrame.ActualHeight:0}");
-        var client = (FrameworkElement)VisualTreeHelper.GetChild(w, 0);
-        Shot($"intro-{label}", client, client.RenderSize);
+        var bgra = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
+        int stride = bgra.PixelWidth * 4;
+        var pixels = new byte[stride * bgra.PixelHeight];
+        bgra.CopyPixels(pixels, stride, 0);
+        double sum = 0;
+        for (int i = 0; i < pixels.Length; i += 4) sum += 0.0722 * pixels[i] + 0.7152 * pixels[i + 1] + 0.2126 * pixels[i + 2];
+        return 16 + sum / (pixels.Length / 4) * 219 / 255;
     }
 
     /// <summary>MediaElement が開けるまで（最大 10 秒）待って、どうなったかを返す。</summary>
@@ -871,9 +936,9 @@ static class Program
         var w = new MainWindow();
         Check("前回の設定に戻る",
             w.PlatformPanel.Children.OfType<RadioButton>().ElementAt(2).IsChecked == true && w.LengthBox.Text == "4:30"
-            && w.IntroCheck.IsChecked == true && w.BlurRadio.IsChecked == true
-            // 選びかた・長さ・フェードは覚える。見ながら選んだ範囲は動画ごとなので覚えない
-            && (IntroChoice)typeof(MainWindow).GetField("_intro", F)!.GetValue(w)! == new IntroChoice(true, 0, 0, "7", true, "0.5", "0.3")
+            && w.BlurRadio.IsChecked == true
+            // 冒頭の秒数・持っていきかた・フェードは覚える。範囲は動画ごとなので覚えない
+            && w.Intro.Choice is { Enabled: true, Seconds: "7", Copy: true, FadeIn: "0.5", FadeOut: "0.3", HasRange: false }
             && w.FadeInBox.Text == "2" && w.FadeOutBox.Text == "３" && w.VolumeSlider.Value == -4
             && w.FontBox.SelectedItem?.ToString() == font && w.ColorBox.SelectedIndex == 2 && w.PositionBox.SelectedIndex == 2
             && w.BackBoxRadio.IsChecked == true && w.SizeBox.Text == "100",
@@ -890,8 +955,8 @@ static class Program
         try
         {
             w = new MainWindow();
-            Check("設定のファイルが壊れていても開ける（最初の設定になる）", w.LengthBox.Text == "2:59" && w.CropRadio.IsChecked == true,
-                w.LengthBox.Text);
+            Check("設定のファイルが壊れていても開ける（最初の設定になる）", w.LengthBox.Text == "2:59" && w.CropRadio.IsChecked == true
+                && w.Intro.Choice is { Enabled: true, Seconds: "5", Copy: false }, w.LengthBox.Text);
             w.Close();
         }
         catch (Exception ex)
@@ -933,37 +998,56 @@ static class Program
                 field.SetValue(w, Convert.ChangeType(4000, field.FieldType));
     }
 
-    /// <summary>窓を width×height にして、切れている部品がないか・ボタンが窓に収まるかを確かめる。</summary>
-    static void CheckLayout(MainWindow w, double width, double height, string label)
+    /// <summary>
+    /// 今の手順の画面を width×height にして、切れている部品がないか・左の画が 9:16 か・大事な部品が窓（スクロールする欄なら
+    /// その見えている所）に収まるかを確かめる。shot ならスクリーンショットも出す。
+    /// </summary>
+    static void CheckLayout(MainWindow w, double width, double height, string label, bool shot)
     {
+        int step = (int)typeof(MainWindow).GetField("_step", F)!.GetValue(w)!;
+        string[] names = ["① 動画", "② 冒頭", "③ BGM", "④ テキスト", "⑤ 作成"];
         w.Width = width;
         w.Height = height;
+        w.UpdateLayout();
+        Pump(TimeSpan.FromMilliseconds(100)); // 大きさに合わせて左の画の幅を決め直すのを待つ
         w.UpdateLayout();
         bool sized = Math.Abs(w.ActualWidth - width) < 1 && Math.Abs(w.ActualHeight - height) < 1;
         var root = (FrameworkElement)w.Content;
         var clipped = Descendants(root).Prepend(root)
-            .Where(e => e.IsVisible && LayoutInformation.GetLayoutClip(e) != null)
+            .Where(e => e.IsVisible && LayoutInformation.GetLayoutClip(e) != null && e is not MediaElement)
             .Select(e => !string.IsNullOrEmpty(e.Name) ? e.Name : e is TextBlock t ? $"「{t.Text}」" : e.GetType().Name)
             .ToList();
-        var corner = w.StartButton.TranslatePoint(new Point(w.StartButton.ActualWidth, w.StartButton.ActualHeight), root);
-        bool inside = corner.X <= root.ActualWidth + 0.5 && corner.Y <= root.ActualHeight + 0.5;
-        static double Need(GroupBox g) => ((FrameworkElement)g.Content).DesiredSize.Height;
-        Check($"画面の配置（{label} {width}×{height}）: 切れている所がない", sized && clipped.Count == 0 && inside,
+        // 部品の右下が、窓（スクロールする欄の中なら、その欄の見えている所）に収まっているか
+        bool InView(FrameworkElement e)
+        {
+            DependencyObject? p = e;
+            while (p != null && p is not ScrollViewer) p = VisualTreeHelper.GetParent(p);
+            var box = p as FrameworkElement ?? root;
+            var corner = e.TranslatePoint(new Point(e.ActualWidth, e.ActualHeight), box);
+            return e.IsVisible && corner.X <= box.ActualWidth + 0.5 && corner.Y <= box.ActualHeight + 0.5;
+        }
+        FrameworkElement[] keys = step switch
+        {
+            0 => [w.AddButton, w.BlurRadio],
+            1 => [w.Intro.ZoomBar, w.Intro.FooterSlot, w.Intro.SecondsBox],
+            2 => [w.BgmSelectButton, w.PreviewVideoButton],
+            3 => [w.CaptionBox, w.PreviewButton],
+            _ => [w.StartButton, w.PreviewVideoButton],
+        };
+        var hidden = keys.Where(k => !InView(k)).Select(k => k.Name is { Length: > 0 } n ? n : k.GetType().Name).ToList();
+        Border frame = step switch { 0 => w.SourceFrame, 1 => w.Intro.VideoFrame, _ => w.PreviewFrame };
+        double ratio = frame.ActualWidth / frame.ActualHeight;
+        // 出来上がりの画は、枠いっぱいに出る（黒い余白がない）
+        bool fills = step < 2 || w.PreviewImage.Source == null || !w.PreviewImage.IsVisible
+                     || (Math.Abs(w.PreviewImage.ActualWidth - frame.ActualWidth) < 1 && Math.Abs(w.PreviewImage.ActualHeight - frame.ActualHeight) < 1);
+        Check($"画面の配置（{names[step]} {label} {width}×{height}）: 切れている所がない・左の画が 9:16",
+            sized && clipped.Count == 0 && hidden.Count == 0 && Math.Abs(ratio - 9.0 / 16) < 0.01 && fills,
             (sized ? "" : $"窓が {w.ActualWidth}×{w.ActualHeight} にしかならない / ") + string.Join(" / ", clipped)
-            + (inside ? "" : $" / 作成ボタンが窓の外（{corner.X:0}, {corner.Y:0}）")
-            + $" [一覧の高さ {w.FilesList.ActualHeight:0} / 中身の高さ 長さ {Need(w.LengthSection):0}・BGM {Need(w.BgmSection):0}"
-            + $"・テキスト {Need(w.TextSection):0}]");
-        // プレビューの枠は出来上がりと同じ 9:16 で、画が枠いっぱいに出る（黒い余白がない）
-        var frame = w.PreviewFrame;
-        var bottom = w.PreviewButton.TranslatePoint(new Point(0, w.PreviewButton.ActualHeight), root);
-        Check($"プレビューの枠が 9:16（{label}）",
-            Math.Abs(frame.ActualWidth / frame.ActualHeight - 9.0 / 16) < 0.005
-            && Math.Abs(w.PreviewImage.ActualWidth - frame.ActualWidth) < 1 && Math.Abs(w.PreviewImage.ActualHeight - frame.ActualHeight) < 1
-            && bottom.Y <= root.ActualHeight + 0.5,
-            $"枠 {frame.ActualWidth:0.#}×{frame.ActualHeight:0.#} / 画 {w.PreviewImage.ActualWidth:0.#}×{w.PreviewImage.ActualHeight:0.#}"
-            + $" / 欄の幅 {w.PreviewSection.ActualWidth:0}");
+            + (hidden.Count == 0 ? "" : $" / 見えない: {string.Join(", ", hidden)}")
+            + $" [左の画 {frame.ActualWidth:0}×{frame.ActualHeight:0}" + (fills ? "" : $" / 画 {w.PreviewImage.ActualWidth:0}×{w.PreviewImage.ActualHeight:0}") + "]");
+        if (!shot) return;
         var client = (FrameworkElement)VisualTreeHelper.GetChild(w, 0);
-        Shot($"main-{label}", client, client.RenderSize);
+        Shot($"step{step}-{label}", client, client.RenderSize);
     }
 
     static IEnumerable<FrameworkElement> Descendants(DependencyObject parent)
